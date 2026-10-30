@@ -49,7 +49,7 @@ export default function LoginPage() {
           <form onSubmit={sendCode}>
             <label>
               학교 이메일
-              <input type="email" required placeholder={`학번@${SCHOOL_DOMAIN}`} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+              <input type="email" required placeholder={`@${SCHOOL_DOMAIN}`} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
             </label>
             <button className="primary" disabled={busy}>{busy ? '보내는 중…' : '인증 코드 받기'}</button>
           </form>
