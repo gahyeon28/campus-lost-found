@@ -36,7 +36,7 @@
 
 - Next.js 16 (App Router)
 - Supabase: 인증, PostgreSQL, Storage
-- Gemini API 또는 Claude API: 이미지 자동 태깅
+- Gemini API: 이미지 자동 태깅
 - Leaflet, OpenStreetMap: 캠퍼스 지도
 - Nodemailer: 알림 메일 발송
 - Vercel: 배포
