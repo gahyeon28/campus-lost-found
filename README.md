@@ -66,6 +66,7 @@ app/
   alerts/              분실 알림 조건과 알림함
   api/tag/             이미지 자동 태깅
   api/notify/          분실 알림 매칭과 메일 발송
+  api/keepalive/       Supabase 무료 프로젝트 일시 정지 방지 (Vercel Cron, 5일마다)
 components/            지도, 카드, 인증 상태
 lib/                   상수, 캠퍼스 건물 좌표, Supabase 클라이언트
 supabase/schema.sql    테이블, 권한 정책, 상태 변경 함수
@@ -109,6 +110,7 @@ tests/                 스키마 권한 테스트, 태깅 응답 처리 테스�
 | `ANTHROPIC_MODEL` | 선택 | 기본값 `claude-haiku-5-5` |
 | `SMTP_USER`, `SMTP_PASS` | 선택 | 없으면 메일 없이 사이트 알림함만 사용 |
 | `SMTP_HOST`, `SMTP_PORT` | 선택 | 기본값 `smtp.gmail.com`, `465` |
+| `CRON_SECRET` | 선택 | 주기적으로 실행되는 DB 접속 작업(`/api/keepalive`)을 Vercel 요청만 받도록 제한 |
 
 ### 캠퍼스 지도 설정
 
