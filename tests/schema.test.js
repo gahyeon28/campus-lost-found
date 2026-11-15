@@ -26,12 +26,14 @@ grant usage, select on all sequences in schema storage to authenticated;
 `;
 
 const schema = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8')
-  .replace(/values \('[^']+'\) on conflict do nothing;\s*$/, "values ('school.ac.kr') on conflict do nothing;");
+  .replace(/allowed_domains \(domain\) values \('[^']+'\)/, "allowed_domains (domain) values ('school.ac.kr')")
+  .replace(/admins \(email\) values \('[^']+'\)/, "admins (email) values ('admin@school.ac.kr')");
 
 const FINDER = { id: '11111111-1111-1111-1111-111111111111', email: 'finder@school.ac.kr' };
 const OWNER = { id: '22222222-2222-2222-2222-222222222222', email: 'owner@stu.school.ac.kr' };
 const OTHER = { id: '33333333-3333-3333-3333-333333333333', email: 'other@school.ac.kr' };
 const R4 = { id: '44444444-4444-4444-4444-444444444444', email: 'r4@school.ac.kr' };
+const ADMIN = { id: '55555555-5555-5555-5555-555555555555', email: 'admin@school.ac.kr' };
 
 let db;
 
@@ -60,7 +62,7 @@ before(async () => {
   await db.exec(STUB);
   await db.exec(schema);
   await db.exec(schema); // 두 번 실행해도 안전한지
-  for (const u of [FINDER, OWNER, OTHER, R4]) {
+  for (const u of [FINDER, OWNER, OTHER, R4, ADMIN]) {
     await db.query('insert into auth.users (id, email) values ($1, $2)', [u.id, u.email]);
   }
 });
@@ -112,7 +114,7 @@ test('퀴즈 없는 물건은 바로 수령 대기, 취소하면 다시 보관�
   const [{ r: dup }] = await as(OWNER, 'select claim_item($1) r', [id]);
   assert.equal(dup.ok, false, '중복 신청 불가');
   await as(FINDER, 'select cancel_claim($1)', [id]);
-  const [row] = await as(FINDER, 'select status, claimant_id from items where id = $1', [id]);
+  const [row] = await as(FINDER, 'select status, claimant_id from items_view where id = $1', [id]);
   assert.deepEqual(row, { status: '보관중', claimant_id: null });
 });
 
@@ -165,4 +167,76 @@ test('사진은 내 폴더에만 올릴 수 있다', async () => {
     as(FINDER, `insert into storage.objects (bucket_id, name) values ('item-images', $1)`, [`${OTHER.id}/a.jpg`]),
     /row-level security/,
   );
+});
+
+test('퀴즈 물건의 상세 위치는 작성자·통과자·관리자에게만 보인다', async () => {
+  const [{ id }] = await as(FINDER, `select create_item($1::jsonb, '고양이') as id`,
+    [newItem({ title: '위치 비공개 에어팟', quiz_question: '스티커 모양은?' })]);
+  const sel = 'select location_detail, storage_detail, lat, lng, location_locked, building from items_view where id = $1';
+
+  const [stranger] = await as(OTHER, sel, [id]);
+  assert.deepEqual(stranger, { location_detail: '', storage_detail: '', lat: null, lng: null, location_locked: true, building: '중앙도서관' });
+  await assert.rejects(as(OTHER, 'select location_detail from items where id = $1', [id]), /permission denied/);
+  await assert.rejects(as(OTHER, 'select * from items'), /permission denied/);
+
+  const [owner] = await as(FINDER, sel, [id]);
+  assert.equal(owner.location_detail, '3층 열람실');
+  assert.equal(owner.location_locked, false);
+  const [admin] = await as(ADMIN, sel, [id]);
+  assert.equal(admin.storage_detail, '3층 안내데스크');
+
+  await as(OWNER, `select claim_item($1, '고양이')`, [id]);
+  const [claimant] = await as(OWNER, sel, [id]);
+  assert.equal(claimant.location_detail, '3층 열람실', '퀴즈 통과 후 공개');
+  assert.equal((await as(OTHER, sel, [id]))[0].location_locked, true);
+
+  const [{ id: plain }] = await as(FINDER, 'select create_item($1::jsonb) as id', [newItem({ title: '흔한 우산', category: '기타' })]);
+  assert.equal((await as(OTHER, sel, [plain]))[0].location_detail, '3층 열람실', '퀴즈 없는 물건은 공개');
+
+  // 작성자는 여전히 자기 게시물을 지울 수 있다
+  await as(FINDER, 'delete from items where id = $1', [plain]);
+  assert.equal((await as(FINDER, 'select id from items_view where id = $1', [plain])).length, 0);
+});
+
+test('관리자 기능: 일반 사용자는 못 쓰고, 관리자는 신고 처리·정지할 수 있다', async () => {
+  for (const fn of ['admin_reported_items()', 'admin_users()', `admin_ban('${OTHER.id}')`, 'admin_set_hidden(1, false)', 'admin_delete_item(1)']) {
+    await assert.rejects(as(OTHER, `select * from ${fn}`), /관리자만/);
+  }
+  assert.equal((await as(OTHER, 'select is_admin() a'))[0].a, false);
+  assert.equal((await as(ADMIN, 'select is_admin() a'))[0].a, true);
+
+  const [{ id }] = await as(R4, 'select create_item($1::jsonb) as id', [newItem({ title: '허위 게시물 테스트' })]);
+  for (const u of [FINDER, OWNER, OTHER]) await as(u, `insert into reports (item_id, reason) values ($1, '허위 게시물')`, [id]);
+
+  const reported = await as(ADMIN, 'select * from admin_reported_items()');
+  const row = reported.find((r) => r.item_id == id);
+  assert.equal(Number(row.report_count), 3);
+  assert.equal(row.hidden, true);
+  assert.equal(row.owner_email, R4.email);
+  assert.equal(row.reports.length, 3);
+  assert.equal((await as(ADMIN, 'select id from items_view where id = $1', [id])).length, 1, '관리자는 숨김 게시물도 봄');
+
+  const users = await as(ADMIN, 'select * from admin_users()');
+  assert.ok(users.some((u) => u.email === R4.email && Number(u.reports_received) >= 3));
+  assert.ok(users.some((u) => u.email === OTHER.email && Number(u.locked_items) >= 1), '퀴즈 잠김 기록도 보임');
+
+  // 정지 → 등록·수령 신청·신고 불가, 게시물 숨김
+  await as(ADMIN, `select admin_ban($1, '허위 게시물 반복')`, [R4.id]);
+  await assert.rejects(as(R4, 'select create_item($1::jsonb)', [newItem()]), /정지/);
+  const [{ id: open }] = await as(FINDER, 'select create_item($1::jsonb) as id', [newItem({ title: '정지 테스트용' })]);
+  assert.equal((await as(R4, 'select claim_item($1) r', [open]))[0].r.ok, false);
+  await assert.rejects(as(R4, `insert into reports (item_id, reason) values ($1, '기타')`, [open]), /row-level security/);
+  assert.ok((await as(R4, 'select * from notifications')).some((n) => n.title.includes('정지')));
+  await assert.rejects(as(ADMIN, `select admin_ban($1)`, [ADMIN.id]), /관리자는 정지/);
+
+  await as(ADMIN, 'select admin_unban($1)', [R4.id]);
+  await as(R4, 'select create_item($1::jsonb)', [newItem({ title: '정지 해제 후 등록' })]);
+
+  // 숨김 해제 시 신고 정리 → 다른 사람에게 다시 보임
+  await as(ADMIN, 'select admin_set_hidden($1, false)', [id]);
+  assert.equal((await as(OTHER, 'select id from items_view where id = $1', [id])).length, 1);
+  assert.equal((await as(ADMIN, 'select * from admin_reported_items()')).filter((r) => r.item_id == id).length, 0);
+
+  await as(ADMIN, 'select admin_delete_item($1)', [id]);
+  assert.equal((await as(ADMIN, 'select id from items_view where id = $1', [id])).length, 0);
 });

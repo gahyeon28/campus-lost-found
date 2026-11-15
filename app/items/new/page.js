@@ -165,6 +165,7 @@ function NewItem() {
           <div className="muted" style={{ marginTop: 4 }}>
             {quizRecommended ? '고가품이거나 특징이 있는 물건이라 퀴즈를 권장해요.' : '우산·텀블러처럼 흔한 물건은 퀴즈 없이 올려도 괜찮아요.'}
             {' '}퀴즈를 맞힌 사람만 수령 신청할 수 있어요. 정답은 공개되지 않아요.
+            {form.use_quiz && ' 퀴즈를 켜면 건물 이름만 공개되고, 상세 위치와 맡긴 곳은 퀴즈를 통과한 사람에게만 보여요. 경비실이나 과사무실처럼 사람이 있는 곳에 맡기는 걸 권장해요.'}
           </div>
           {form.use_quiz && (
             <div className="row" style={{ marginTop: 10 }}>

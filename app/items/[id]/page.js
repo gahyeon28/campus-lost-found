@@ -51,7 +51,7 @@ function ReportBox({ itemId }) {
   async function report(e) {
     e.preventDefault();
     const { error } = await supabase().from('reports').insert({ item_id: itemId, reason, detail });
-    if (error) setMsg({ error: error.code === '23505' ? '이미 신고한 게시물이에요.' : error.message });
+    if (error) setMsg({ error: error.code === '23505' ? '이미 신고한 게시물이에요.' : error.code === '42501' ? '신고할 수 없는 계정이거나 게시물이에요.' : error.message });
     else setMsg({ ok: '신고가 접수되었어요. 신고가 누적되면 게시물이 숨겨집니다.' });
   }
 
@@ -107,7 +107,7 @@ function Detail() {
   return (
     <>
       {flash && <div className={`box ${flash.error ? 'red' : 'green'}`} style={{ marginBottom: 14 }}>{flash.error || flash.ok}</div>}
-      {item.hidden && <div className="box red" style={{ marginBottom: 14 }}>신고 누적으로 다른 사람에게는 보이지 않는 게시물이에요.</div>}
+      {item.hidden && <div className="box red" style={{ marginBottom: 14 }}>숨김 처리되어 다른 사람에게는 보이지 않는 게시물이에요.</div>}
 
       <div className="detail">
         <div><Thumb item={item} tall /></div>
@@ -123,6 +123,9 @@ function Detail() {
             <tr><td>습득 일시</td><td>{formatDateTime(item.found_at)}</td></tr>
             <tr><td>발견 위치</td><td>{item.building} {item.location_detail}</td></tr>
             <tr><td>보관</td><td><b>{item.storage_type}</b>{item.storage_detail && <> · {item.storage_detail}</>}</td></tr>
+            {item.location_locked && (
+              <tr><td>상세 위치</td><td className="muted">본인 확인 퀴즈를 통과하면 상세 위치와 맡긴 곳이 공개돼요.</td></tr>
+            )}
             {item.brand && <tr><td>브랜드</td><td>{item.brand}</td></tr>}
             {item.tags?.length > 0 && <tr><td>키워드</td><td>{item.tags.join(', ')}</td></tr>}
             {item.description && <tr><td>설명</td><td>{item.description}</td></tr>}

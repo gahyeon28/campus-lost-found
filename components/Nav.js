@@ -15,12 +15,18 @@ export default function Nav() {
   const { user } = useAuth();
   const path = usePathname();
   const [unread, setUnread] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     supabase().from('notifications').select('id', { count: 'exact', head: true }).eq('read', false)
       .then(({ count }) => setUnread(count || 0));
   }, [user, path]);
+
+  useEffect(() => {
+    if (!user) return setIsAdmin(false);
+    supabase().rpc('is_admin').then(({ data }) => setIsAdmin(data === true));
+  }, [user]);
 
   return (
     <header className="nav">
@@ -33,6 +39,7 @@ export default function Nav() {
               {href === '/alerts' && unread > 0 && <span className="dot">{unread}</span>}
             </Link>
           ))}
+          {isAdmin && <Link href="/admin" className={path === '/admin' ? 'active' : ''}>관리자</Link>}
           <button className="link" onClick={() => supabase().auth.signOut()}>로그아웃</button>
         </nav>
       )}

@@ -1,5 +1,6 @@
 -- ============================================================
 -- 교내 분실물 스마트 찾기 — Supabase 스키마
+-- 여러 번 실행해도 안전하며, 다시 실행해도 기존 데이터는 지워지지 않는다.
 -- ============================================================
 
 -- ── 0. 허용 이메일 도메인 ────────────────────────────────────
@@ -36,6 +37,27 @@ drop trigger if exists enforce_school_email on auth.users;
 create trigger enforce_school_email
   before insert or update of email on auth.users
   for each row execute function public.enforce_school_email();
+
+-- 관리자(이메일로 지정)와 이용 정지 사용자
+create table if not exists public.admins (
+  email text primary key check (email = lower(email) and email like '%@%')
+);
+
+create table if not exists public.bans (
+  user_id   uuid primary key references auth.users on delete cascade,
+  reason    text not null default '' check (char_length(reason) <= 300),
+  banned_at timestamptz not null default now()
+);
+
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer set search_path = public
+as $$ select exists (select 1 from public.admins a where a.email = lower(auth.jwt() ->> 'email')) $$;
+
+create or replace function public.is_banned()
+returns boolean
+language sql stable security definer set search_path = public
+as $$ select exists (select 1 from public.bans b where b.user_id = auth.uid()) $$;
 
 -- ── 1. 습득물 ────────────────────────────────────────────────
 create table if not exists public.items (
@@ -80,12 +102,29 @@ create table if not exists public.claim_attempts (
 );
 create index if not exists claim_attempts_idx on public.claim_attempts (item_id, user_id);
 
--- 화면에 보여줄 상태: 보관중인데 습득 후 30일이 지나면 '장기 미수령'
-create or replace view public.items_view with (security_invoker = true) as
-select i.*,
+-- 화면용 조회 창구. 사용자는 items 테이블을 직접 읽지 못하고 이 뷰로만 읽는다.
+-- - 숨김 게시물은 작성자와 관리자에게만 보인다.
+-- - 퀴즈가 있는 물건의 상세 위치·맡긴 곳·좌표는 작성자, 퀴즈를 통과한 수령 신청자, 관리자에게만 보인다.
+-- - 보관중인데 습득 후 30일이 지나면 '장기 미수령'으로 표시한다.
+drop view if exists public.items_view;
+create view public.items_view as
+select i.id, i.owner_id, i.title, i.category, i.color, i.brand, i.tags, i.description, i.building,
+       case when v.open then i.location_detail else '' end as location_detail,
+       i.storage_type,
+       case when v.open then i.storage_detail else '' end as storage_detail,
+       case when v.open then i.lat end as lat,
+       case when v.open then i.lng end as lng,
+       i.found_at, i.image_path, i.quiz_question, i.status, i.claimant_id, i.claimed_at, i.completed_at,
+       i.hidden, i.notified, i.created_at,
+       not v.open as location_locked,
        case when i.status = '보관중' and i.found_at < now() - interval '30 days'
             then '장기 미수령' else i.status end as display_status
-from public.items i;
+from public.items i
+cross join lateral (
+  select coalesce(i.quiz_question is null or auth.uid() = i.owner_id or auth.uid() = i.claimant_id
+                  or public.is_admin(), false) as open
+) v
+where public.is_school_email() and (not i.hidden or i.owner_id = auth.uid() or public.is_admin());
 
 -- ── 2. 신고 ──────────────────────────────────────────────────
 create table if not exists public.reports (
@@ -131,13 +170,17 @@ alter table public.claim_attempts  enable row level security;
 alter table public.reports         enable row level security;
 alter table public.watches         enable row level security;
 alter table public.notifications   enable row level security;
+alter table public.admins          enable row level security;
+alter table public.bans            enable row level security;
 
 -- Supabase는 새 테이블에 ALL 권한을 기본 부여하므로 먼저 회수하고 필요한 것만 다시 준다.
 revoke all on public.allowed_domains, public.items, public.items_view, public.item_secrets,
-              public.claim_attempts, public.reports, public.watches, public.notifications
+              public.claim_attempts, public.reports, public.watches, public.notifications,
+              public.admins, public.bans
   from anon, authenticated;
 
-grant select, delete on public.items to authenticated;
+-- items는 삭제에 필요한 열만 읽을 수 있다 (위치 같은 내용은 items_view로만).
+grant select (id, owner_id, status), delete on public.items to authenticated;
 grant select on public.items_view to authenticated;
 grant select, insert (item_id, reason, detail) on public.reports to authenticated;
 grant select, delete, insert (keywords, category, color, building, lost_from), update (active)
@@ -159,7 +202,7 @@ create policy reports_select on public.reports for select to authenticated
 drop policy if exists reports_insert on public.reports;
 create policy reports_insert on public.reports for insert to authenticated
   with check (
-    reporter_id = auth.uid() and public.is_school_email()
+    reporter_id = auth.uid() and public.is_school_email() and not public.is_banned()
     and exists (select 1 from public.items i where i.id = item_id and i.owner_id <> auth.uid())
   );
 
@@ -189,6 +232,9 @@ declare
 begin
   if auth.uid() is null or not public.is_school_email() then
     raise exception '학교 이메일로 로그인해야 합니다.';
+  end if;
+  if public.is_banned() then
+    raise exception '이용이 정지된 계정입니다.';
   end if;
   if v_quiz is not null and coalesce(trim(p_answer), '') = '' then
     raise exception '확인 퀴즈의 정답을 입력해주세요.';
@@ -234,6 +280,9 @@ declare
 begin
   if auth.uid() is null or not public.is_school_email() then
     raise exception '학교 이메일로 로그인해야 합니다.';
+  end if;
+  if public.is_banned() then
+    return jsonb_build_object('ok', false, 'message', '이용이 정지된 계정입니다.');
   end if;
   select * into v_item from public.items where id = p_item_id and not hidden for update;
   if not found then return jsonb_build_object('ok', false, 'message', '물건을 찾을 수 없습니다.'); end if;
@@ -356,18 +405,147 @@ begin
 end;
 $$;
 
+-- ── 6. 관리자 기능 (함수 안에서 관리자인지 확인) ────────────
+create or replace function public.assert_admin()
+returns void
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_admin() then raise exception '관리자만 사용할 수 있습니다.'; end if;
+end;
+$$;
+
+-- 신고가 1건 이상 들어온 게시물, 신고 많은 순
+create or replace function public.admin_reported_items()
+returns table (item_id bigint, title text, building text, status text, hidden boolean,
+               created_at timestamptz, owner_id uuid, owner_email text, owner_banned boolean,
+               report_count bigint, reports jsonb)
+language plpgsql stable security definer set search_path = public
+as $$
+#variable_conflict use_column
+begin
+  perform public.assert_admin();
+  return query
+  select i.id, i.title, i.building, i.status, i.hidden, i.created_at, i.owner_id, u.email::text,
+         exists (select 1 from public.bans b where b.user_id = i.owner_id),
+         count(r.id),
+         jsonb_agg(jsonb_build_object('reason', r.reason, 'detail', r.detail, 'at', r.created_at)
+                   order by r.created_at desc)
+  from public.items i
+  join public.reports r on r.item_id = i.id
+  left join auth.users u on u.id = i.owner_id
+  group by i.id, u.email
+  order by count(r.id) desc, max(r.created_at) desc;
+end;
+$$;
+
+-- 주의가 필요한 사용자: 정지됐거나, 내 게시물이 신고됐거나, 퀴즈 오답 기록이 있는 사람
+create or replace function public.admin_users()
+returns table (user_id uuid, email text, banned boolean, ban_reason text, item_count bigint,
+               reports_received bigint, failed_attempts bigint, locked_items bigint, claim_count bigint)
+language plpgsql stable security definer set search_path = public
+as $$
+#variable_conflict use_column
+begin
+  perform public.assert_admin();
+  return query
+  select u.id, u.email::text, b.user_id is not null, b.reason,
+         (select count(*) from public.items i where i.owner_id = u.id),
+         (select count(*) from public.reports r join public.items i on i.id = r.item_id where i.owner_id = u.id),
+         (select count(*) from public.claim_attempts c where c.user_id = u.id),
+         (select count(*) from (select c.item_id from public.claim_attempts c where c.user_id = u.id
+                                group by c.item_id having count(*) >= 3) x),
+         (select count(*) from public.items i where i.claimant_id = u.id)
+  from auth.users u
+  left join public.bans b on b.user_id = u.id
+  where b.user_id is not null
+     or exists (select 1 from public.reports r join public.items i on i.id = r.item_id where i.owner_id = u.id)
+     or exists (select 1 from public.claim_attempts c where c.user_id = u.id)
+  order by 3 desc, 6 desc, 7 desc;
+end;
+$$;
+
+-- 숨김/숨김 해제. 해제하면 검토가 끝난 것으로 보고 기존 신고를 정리한다.
+create or replace function public.admin_set_hidden(p_item_id bigint, p_hidden boolean)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+declare v_owner uuid; v_title text;
+begin
+  perform public.assert_admin();
+  update public.items set hidden = p_hidden where id = p_item_id returning owner_id, title into v_owner, v_title;
+  if not found then raise exception '게시물을 찾을 수 없습니다.'; end if;
+  if not p_hidden then
+    delete from public.reports where item_id = p_item_id;
+  end if;
+  insert into public.notifications (user_id, item_id, title, body)
+  values (v_owner, p_item_id,
+          case when p_hidden then '관리자가 게시물을 숨겼어요' else '게시물 숨김이 해제되었어요' end,
+          format('''%s'' 게시물이 관리자에 의해 %s되었습니다.', v_title, case when p_hidden then '숨김 처리' else '다시 공개' end));
+end;
+$$;
+
+create or replace function public.admin_delete_item(p_item_id bigint)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+begin
+  perform public.assert_admin();
+  delete from public.items where id = p_item_id;
+  if not found then raise exception '게시물을 찾을 수 없습니다.'; end if;
+end;
+$$;
+
+-- 이용 정지: 등록·수령 신청·신고를 막고, 아직 끝나지 않은 그 사람의 게시물을 숨긴다.
+create or replace function public.admin_ban(p_user_id uuid, p_reason text default '')
+returns void
+language plpgsql security definer set search_path = public
+as $$
+begin
+  perform public.assert_admin();
+  if exists (select 1 from auth.users u join public.admins a on a.email = lower(u.email) where u.id = p_user_id) then
+    raise exception '관리자는 정지할 수 없습니다.';
+  end if;
+  insert into public.bans (user_id, reason) values (p_user_id, coalesce(p_reason, ''))
+  on conflict (user_id) do update set reason = excluded.reason, banned_at = now();
+  update public.items set hidden = true where owner_id = p_user_id and status <> '수령 완료';
+  insert into public.notifications (user_id, title, body)
+  values (p_user_id, '이용이 정지되었어요',
+          coalesce(nullif(p_reason, ''), '운영 정책 위반') || ' 사유로 게시물 등록, 수령 신청, 신고가 제한됩니다.');
+end;
+$$;
+
+create or replace function public.admin_unban(p_user_id uuid)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+begin
+  perform public.assert_admin();
+  delete from public.bans where user_id = p_user_id;
+  if not found then raise exception '정지된 사용자가 아닙니다.'; end if;
+  insert into public.notifications (user_id, title, body)
+  values (p_user_id, '이용 정지가 해제되었어요', '다시 모든 기능을 이용할 수 있습니다. 숨겨진 게시물은 관리자 검토 후 공개됩니다.');
+end;
+$$;
+
 -- 함수 실행 권한: 기본(public) 권한을 회수하고 필요한 것만 부여
 revoke execute on function public.create_item(jsonb, text), public.claim_item(bigint, text),
   public.complete_item(bigint), public.cancel_claim(bigint), public.notify_matches(bigint, uuid),
-  public.on_report(), public.enforce_school_email(), public.is_school_email(text)
+  public.on_report(), public.enforce_school_email(), public.is_school_email(text),
+  public.is_admin(), public.is_banned(), public.assert_admin(),
+  public.admin_reported_items(), public.admin_users(), public.admin_set_hidden(bigint, boolean),
+  public.admin_delete_item(bigint), public.admin_ban(uuid, text), public.admin_unban(uuid)
   from public, anon;
 grant execute on function public.create_item(jsonb, text), public.claim_item(bigint, text),
-  public.complete_item(bigint), public.cancel_claim(bigint), public.is_school_email(text)
+  public.complete_item(bigint), public.cancel_claim(bigint), public.is_school_email(text),
+  public.is_admin(), public.is_banned(), public.assert_admin(),
+  public.admin_reported_items(), public.admin_users(), public.admin_set_hidden(bigint, boolean),
+  public.admin_delete_item(bigint), public.admin_ban(uuid, text), public.admin_unban(uuid)
   to authenticated;
 revoke execute on function public.notify_matches(bigint, uuid) from authenticated;
 grant execute on function public.notify_matches(bigint, uuid) to service_role;
 
--- ── 6. 사진 저장소 ───────────────────────────────────────────
+-- ── 7. 사진 저장소 ───────────────────────────────────────────
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('item-images', 'item-images', true, 5242880, array['image/jpeg', 'image/png', 'image/webp'])
 on conflict (id) do nothing;
@@ -383,3 +561,6 @@ create policy "item images upload own folder" on storage.objects for insert to a
 -- ============================================================
 -- 학교 도메인 설정
 insert into public.allowed_domains (domain) values ('gachon.ac.kr') on conflict do nothing;
+
+-- 관리자 이메일 설정 (실제 관리자 학교 메일로 바꾸기. 여러 명이면 줄을 추가, 소문자로)
+insert into public.admins (email) values ('change-me@example.invalid') on conflict do nothing;

@@ -16,7 +16,12 @@ export async function POST(req) {
     return json({ matched: targets?.length || 0, emailed: 0 });
   }
 
-  const { data: item } = await admin.from('items').select('title, building, location_detail, storage_detail').eq('id', itemId).single();
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const { data: item } = await admin.from('items').select('title, building, location_detail, storage_detail, quiz_question').eq('id', itemId).single();
+  // 퀴즈가 있는 물건은 메일에도 상세 위치를 넣지 않는다 (퀴즈 통과자에게만 공개).
+  const where = item.quiz_question
+    ? `${esc(item.building)} (상세 위치는 퀴즈 통과 후 공개)`
+    : `${esc(item.building)} ${esc(item.location_detail)}<br>🏢 ${esc(item.storage_detail)}`;
   const link = `${new URL(req.url).origin}/items/${itemId}`;
   const transport = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -24,14 +29,13 @@ export async function POST(req) {
     secure: Number(process.env.SMTP_PORT || 465) === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
   const results = await Promise.allSettled(targets.map((t) => transport.sendMail({
     from: `"교내 분실물 스마트 찾기" <${process.env.SMTP_USER}>`,
     to: t.email,
     subject: `[분실물 알림] '${t.keywords.join(', ')}'와 비슷한 습득물이 등록됐어요`,
     html: `<p>등록해 둔 키워드 <b>${esc(t.keywords.join(', '))}</b>와 비슷한 물건이 습득되었습니다.</p>
-      <p><b>${esc(item.title)}</b><br>📍 ${esc(item.building)} ${esc(item.location_detail)}<br>🏢 ${esc(item.storage_detail)}</p>
+      <p><b>${esc(item.title)}</b><br>📍 ${where}</p>
       <p><a href="${link}">게시물 확인하기</a></p>
       <p style="color:#888;font-size:12px">알림을 그만 받으려면 사이트의 '분실 알림' 메뉴에서 끄세요.</p>`,
   })));
