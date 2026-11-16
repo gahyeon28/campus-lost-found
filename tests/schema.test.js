@@ -240,3 +240,22 @@ test('관리자 기능: 일반 사용자는 못 쓰고, 관리자는 신고 처�
   await as(ADMIN, 'select admin_delete_item($1)', [id]);
   assert.equal((await as(ADMIN, 'select id from items_view where id = $1', [id])).length, 0);
 });
+
+test('공용 장소에 맡기면 맡긴 곳 입력 필수, 퀴즈 물건도 그 자리에 둘 수 있음', async () => {
+  const [{ id }] = await as(FINDER, `select create_item($1::jsonb, '고양이') as id`,
+    [newItem({ title: '그 자리에 둔 퀴즈 물건', quiz_question: 'q', storage_type: '발견한 자리에 그대로', storage_detail: '', location_detail: '2층 벤치' })]);
+  assert.equal((await as(OTHER, 'select location_detail from items_view where id = $1', [id]))[0].location_detail, '', '상세 위치는 숨김');
+  await assert.rejects(as(FINDER, 'select create_item($1::jsonb)', [newItem({ storage_detail: '  ' })]), /맡긴 장소/);
+  await as(FINDER, 'select create_item($1::jsonb)', [newItem({ title: '그대로 둔 우산', storage_type: '발견한 자리에 그대로', storage_detail: '' })]);
+});
+
+test('수령 대기는 한 사람당 3건까지', async () => {
+  const ids = [];
+  for (let i = 0; i < 4; i++) ids.push((await as(FINDER, 'select create_item($1::jsonb) as id', [newItem({ title: `묶기 테스트 ${i}` })]))[0].id);
+  for (const id of ids.slice(0, 3)) assert.equal((await as(R4, 'select claim_item($1) r', [id]))[0].r.ok, true);
+  const [{ r }] = await as(R4, 'select claim_item($1) r', [ids[3]]);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /3건/);
+  await as(R4, 'select cancel_claim($1)', [ids[0]]);
+  assert.equal((await as(R4, 'select claim_item($1) r', [ids[3]]))[0].r.ok, true, '취소하면 다시 신청 가능');
+});

@@ -245,6 +245,9 @@ begin
   if (p ->> 'found_at')::timestamptz > now() + interval '10 minutes' then
     raise exception '습득 시각이 미래일 수 없습니다.';
   end if;
+  if p ->> 'storage_type' = '근처 공용 장소에 맡김' and coalesce(trim(p ->> 'storage_detail'), '') = '' then
+    raise exception '맡긴 장소를 적어주세요.';
+  end if;
 
   insert into public.items (owner_id, title, category, color, brand, tags, description, building,
                             location_detail, storage_type, storage_detail, lat, lng, found_at,
@@ -291,6 +294,10 @@ begin
   end if;
   if v_item.status <> '보관중' then
     return jsonb_build_object('ok', false, 'message', '이미 수령 신청이 진행 중이거나 완료된 물건입니다.');
+  end if;
+  -- 남의 물건을 여러 개 묶어 두는 것을 막기 위해 수령 대기는 한 사람당 3건까지
+  if (select count(*) from public.items where claimant_id = auth.uid() and status = '수령 대기') >= 3 then
+    return jsonb_build_object('ok', false, 'message', '수령 대기 중인 신청이 3건 있어요. 먼저 수령을 완료하거나 취소해주세요.');
   end if;
 
   if v_item.quiz_question is not null then
@@ -564,3 +571,6 @@ insert into public.allowed_domains (domain) values ('gachon.ac.kr') on conflict 
 
 -- 관리자 이메일 설정 (실제 관리자 학교 메일로 바꾸기. 여러 명이면 줄을 추가, 소문자로)
 insert into public.admins (email) values ('change-me@example.invalid') on conflict do nothing;
+-- 실제 관리자가 이미 있으면 예시 주소는 지운다 (업데이트 때 이 파일을 그대로 다시 실행해도 되도록)
+delete from public.admins where email = 'change-me@example.invalid'
+  and exists (select 1 from public.admins where email <> 'change-me@example.invalid');
