@@ -259,3 +259,11 @@ test('수령 대기는 한 사람당 3건까지', async () => {
   await as(R4, 'select cancel_claim($1)', [ids[0]]);
   assert.equal((await as(R4, 'select claim_item($1) r', [ids[3]]))[0].r.ok, true, '취소하면 다시 신청 가능');
 });
+
+test('AI 태깅 하루 사용 한도: 서버만 호출 가능, 한도까지만 허용', async () => {
+  await assert.rejects(as(OTHER, `select consume_tag_quota($1, 2)`, [OTHER.id]), /permission denied/);
+  const use = async () => (await as('service', `select consume_tag_quota($1, 2) ok`, [OTHER.id]))[0].ok;
+  assert.deepEqual([await use(), await use(), await use()], [true, true, false]);
+  assert.equal((await as('service', `select consume_tag_quota($1, 2) ok`, [FINDER.id]))[0].ok, true, '사람마다 따로 셈');
+  await assert.rejects(as(OTHER, 'select * from tag_usage'), /permission denied/);
+});

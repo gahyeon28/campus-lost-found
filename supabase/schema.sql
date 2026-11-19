@@ -162,6 +162,14 @@ create table if not exists public.notifications (
 );
 create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
 
+-- AI 자동 태깅 사용량 (1인당 하루 횟수 제한용)
+create table if not exists public.tag_usage (
+  user_id uuid not null references auth.users on delete cascade,
+  day     date not null,
+  count   int  not null default 0,
+  primary key (user_id, day)
+);
+
 -- ── 4. 권한 (RLS) ────────────────────────────────────────────
 alter table public.allowed_domains enable row level security;
 alter table public.items           enable row level security;
@@ -172,11 +180,12 @@ alter table public.watches         enable row level security;
 alter table public.notifications   enable row level security;
 alter table public.admins          enable row level security;
 alter table public.bans            enable row level security;
+alter table public.tag_usage       enable row level security;
 
 -- Supabase는 새 테이블에 ALL 권한을 기본 부여하므로 먼저 회수하고 필요한 것만 다시 준다.
 revoke all on public.allowed_domains, public.items, public.items_view, public.item_secrets,
               public.claim_attempts, public.reports, public.watches, public.notifications,
-              public.admins, public.bans
+              public.admins, public.bans, public.tag_usage
   from anon, authenticated;
 
 -- items는 삭제에 필요한 열만 읽을 수 있다 (위치 같은 내용은 items_view로만).
@@ -411,6 +420,25 @@ begin
   select distinct on (m.email) m.email, m.keywords from matched m;
 end;
 $$;
+
+-- AI 태깅 1회 사용: 오늘(한국 시간) 사용 횟수가 한도 미만이면 1 늘리고 true, 아니면 false.
+-- 서버(/api/tag)만 service_role 키로 호출한다.
+create or replace function public.consume_tag_quota(p_user_id uuid, p_limit int)
+returns boolean
+language plpgsql security definer set search_path = public
+as $$
+declare v_count int;
+begin
+  insert into public.tag_usage (user_id, day, count)
+  values (p_user_id, (now() at time zone 'Asia/Seoul')::date, 1)
+  on conflict (user_id, day) do update set count = public.tag_usage.count + 1
+    where public.tag_usage.count < p_limit
+  returning count into v_count;
+  return v_count is not null;
+end;
+$$;
+revoke execute on function public.consume_tag_quota(uuid, int) from public, anon, authenticated;
+grant execute on function public.consume_tag_quota(uuid, int) to service_role;
 
 -- ── 6. 관리자 기능 (함수 안에서 관리자인지 확인) ────────────
 create or replace function public.assert_admin()
