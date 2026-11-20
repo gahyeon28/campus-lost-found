@@ -278,55 +278,74 @@ begin
 end;
 $$;
 
--- 수령 신청: 퀴즈가 있으면 정답 확인 (3회 오답 시 잠금)
-create or replace function public.claim_item(p_item_id bigint, p_answer text default null)
+-- 수령 신청 가능 여부 확인 (정지, 숨김, 본인 글, 상태, 동시 신청 수, 퀴즈 잠금).
+-- 가능하면 {ok: true, quiz: 퀴즈 여부}, 아니면 {ok: false, message, locked?}
+create or replace function public.claim_check(p_item_id bigint, p_user_id uuid)
 returns jsonb
-language plpgsql security definer set search_path = public
+language plpgsql stable security definer set search_path = public
 as $$
-declare
-  v_item   public.items;
-  v_answer text;
-  v_tries  int;
-  v_user   text := normalize_answer(p_answer);
-  v_right  text;
+declare v_item public.items;
 begin
-  if auth.uid() is null or not public.is_school_email() then
-    raise exception '학교 이메일로 로그인해야 합니다.';
-  end if;
-  if public.is_banned() then
+  if exists (select 1 from public.bans where user_id = p_user_id) then
     return jsonb_build_object('ok', false, 'message', '이용이 정지된 계정입니다.');
   end if;
-  select * into v_item from public.items where id = p_item_id and not hidden for update;
+  select * into v_item from public.items where id = p_item_id and not hidden;
   if not found then return jsonb_build_object('ok', false, 'message', '물건을 찾을 수 없습니다.'); end if;
-  if v_item.owner_id = auth.uid() then
+  if v_item.owner_id = p_user_id then
     return jsonb_build_object('ok', false, 'message', '내가 등록한 물건은 신청할 수 없습니다.');
   end if;
   if v_item.status <> '보관중' then
     return jsonb_build_object('ok', false, 'message', '이미 수령 신청이 진행 중이거나 완료된 물건입니다.');
   end if;
   -- 남의 물건을 여러 개 묶어 두는 것을 막기 위해 수령 대기는 한 사람당 3건까지
-  if (select count(*) from public.items where claimant_id = auth.uid() and status = '수령 대기') >= 3 then
+  if (select count(*) from public.items where claimant_id = p_user_id and status = '수령 대기') >= 3 then
     return jsonb_build_object('ok', false, 'message', '수령 대기 중인 신청이 3건 있어요. 먼저 수령을 완료하거나 취소해주세요.');
   end if;
+  if v_item.quiz_question is not null
+     and (select count(*) from public.claim_attempts where item_id = p_item_id and user_id = p_user_id) >= 3 then
+    return jsonb_build_object('ok', false, 'locked', true,
+      'message', '오답 3회로 온라인 신청이 잠겼습니다. 등록자에게 직접 문의해주세요.');
+  end if;
+  return jsonb_build_object('ok', true, 'quiz', v_item.quiz_question is not null);
+end;
+$$;
+
+-- 수령 신청 처리. p_judged가 null이면 정답을 글자로 비교하고, 값이 있으면 서버(AI 판단) 결과를 그대로 쓴다.
+create or replace function public.claim_core(p_item_id bigint, p_user_id uuid, p_answer text, p_judged boolean)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_check  jsonb;
+  v_item   public.items;
+  v_tries  int;
+  v_user   text := normalize_answer(p_answer);
+  v_right  text;
+  v_ok     boolean;
+begin
+  perform 1 from public.items where id = p_item_id for update; -- 동시에 두 명이 신청하는 경우 대비
+  v_check := public.claim_check(p_item_id, p_user_id);
+  if not (v_check ->> 'ok')::boolean then return v_check; end if;
+  select * into v_item from public.items where id = p_item_id;
 
   if v_item.quiz_question is not null then
-    select count(*) into v_tries from public.claim_attempts where item_id = p_item_id and user_id = auth.uid();
-    if v_tries >= 3 then
-      return jsonb_build_object('ok', false, 'locked', true,
-        'message', '오답 3회로 온라인 신청이 잠겼습니다. 등록자에게 직접 문의해주세요.');
+    select count(*) into v_tries from public.claim_attempts where item_id = p_item_id and user_id = p_user_id;
+    if p_judged is not null then
+      v_ok := p_judged;
+    else
+      select normalize_answer(answer) into v_right from public.item_secrets where item_id = p_item_id;
+      -- 정확히 일치하거나 정답 뒤에 조사·어미 정도만 붙은 경우만 허용 ("카드" ≠ "체크카드")
+      v_ok := v_user <> '' and (v_user = v_right or (position(v_right in v_user) > 0 and length(v_user) <= length(v_right) + 3));
     end if;
-    select answer into v_answer from public.item_secrets where item_id = p_item_id;
-    v_right := normalize_answer(v_answer);
-    -- 정확히 일치하거나 정답 뒤에 조사·어미 정도만 붙은 경우만 허용 ("카드" ≠ "체크카드")
-    if v_user = '' or not (v_user = v_right or (position(v_right in v_user) > 0 and length(v_user) <= length(v_right) + 3)) then
-      insert into public.claim_attempts (item_id, user_id) values (p_item_id, auth.uid());
+    if not v_ok then
+      insert into public.claim_attempts (item_id, user_id) values (p_item_id, p_user_id);
       return jsonb_build_object('ok', false, 'left', 2 - v_tries, 'locked', v_tries + 1 >= 3,
         'message', case when v_tries + 1 >= 3 then '오답 3회로 온라인 신청이 잠겼습니다.'
                         else format('정답이 아닙니다. 남은 기회 %s회', 2 - v_tries) end);
     end if;
   end if;
 
-  update public.items set status = '수령 대기', claimant_id = auth.uid(), claimed_at = now()
+  update public.items set status = '수령 대기', claimant_id = p_user_id, claimed_at = now()
    where id = p_item_id;
   insert into public.notifications (user_id, item_id, title, body)
   values (v_item.owner_id, p_item_id, '수령 신청이 들어왔어요',
@@ -334,6 +353,33 @@ begin
   return jsonb_build_object('ok', true, 'message', '수령 신청이 완료되었습니다.');
 end;
 $$;
+
+-- 사용자가 직접 호출: 정답을 글자로만 비교 (퀴즈 없는 물건, AI가 꺼져 있을 때)
+create or replace function public.claim_item(p_item_id bigint, p_answer text default null)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if auth.uid() is null or not public.is_school_email() then
+    raise exception '학교 이메일로 로그인해야 합니다.';
+  end if;
+  return public.claim_core(p_item_id, auth.uid(), p_answer, null);
+end;
+$$;
+
+-- 서버(/api/claim)만 호출: AI가 판단한 정답 여부로 처리
+create or replace function public.claim_item_judged(p_item_id bigint, p_user_id uuid, p_correct boolean)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+begin
+  return public.claim_core(p_item_id, p_user_id, null, p_correct);
+end;
+$$;
+
+revoke execute on function public.claim_check(bigint, uuid), public.claim_core(bigint, uuid, text, boolean),
+  public.claim_item_judged(bigint, uuid, boolean) from public, anon, authenticated;
+grant execute on function public.claim_check(bigint, uuid), public.claim_item_judged(bigint, uuid, boolean) to service_role;
 
 -- 수령 완료: 등록자 또는 신청자
 create or replace function public.complete_item(p_item_id bigint)

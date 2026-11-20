@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
 import { RequireAuth, useAuth } from '@/components/AuthProvider';
 import { StatusBadge, Thumb, formatDateTime } from '@/components/ItemCard';
-import { supabase } from '@/lib/supabase';
+import { supabase, authedFetch } from '@/lib/supabase';
 import { CATEGORY_EMOJI, REPORT_REASONS } from '@/lib/constants';
 
 const MapPicker = dynamic(() => import('@/components/MapPicker'), { ssr: false });
@@ -17,11 +17,15 @@ function ClaimBox({ item, onDone }) {
   async function claim(e) {
     e.preventDefault();
     setBusy(true);
-    const { data, error } = await supabase().rpc('claim_item', { p_item_id: item.id, p_answer: answer || null });
-    setBusy(false);
-    if (error) return setMsg({ error: error.message });
-    if (data.ok) return onDone(data.message);
-    setMsg({ error: data.message, locked: data.locked });
+    try {
+      const data = await authedFetch('/api/claim', { itemId: item.id, answer });
+      if (data.ok) return onDone(data.message);
+      setMsg({ error: data.message, locked: data.locked });
+    } catch (err) {
+      setMsg({ error: err.message });
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (msg?.locked) return <div className="box red">🔒 {msg.error}</div>;
@@ -30,8 +34,9 @@ function ClaimBox({ item, onDone }) {
       <b>🙋 내 물건이에요 — 수령 신청하기</b>
       {item.quiz_question ? (
         <>
-          <span className="muted">등록자가 남긴 본인 확인 질문에 답해주세요. 3번 틀리면 잠겨요.</span>
-          <label>Q. {item.quiz_question}<input required value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="정답" /></label>
+          <span className="muted">등록자가 남긴 본인 확인 질문에 답해주세요. 뜻이 같으면 표현이 달라도 AI가 정답으로 인정해요. 3번 틀리면 잠겨요.</span>
+          <label>Q. {item.quiz_question}<input required maxLength={50} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="정답" /></label>
+          {msg?.error && !msg.locked && <span className="muted">틀렸다면 더 일반적인 표현으로도 답해 보세요. 예: 캐릭터 이름 대신 "고양이 스티커"</span>}
         </>
       ) : (
         <span className="muted">퀴즈가 없는 물건이에요. 신청 후 위 보관 위치에서 찾아가세요. 허위 신청은 기록이 남아요.</span>

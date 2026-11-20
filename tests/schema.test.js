@@ -267,3 +267,21 @@ test('AI 태깅 하루 사용 한도: 서버만 호출 가능, 한도까지만 �
   assert.equal((await as('service', `select consume_tag_quota($1, 2) ok`, [FINDER.id]))[0].ok, true, '사람마다 따로 셈');
   await assert.rejects(as(OTHER, 'select * from tag_usage'), /permission denied/);
 });
+
+test('AI 판단 수령 신청: 서버만 호출, 오답은 기회 차감, 정답이면 수령 대기', async () => {
+  const [{ id }] = await as(FINDER, `select create_item($1::jsonb, '고양이') as id`,
+    [newItem({ title: 'AI 판단 테스트', quiz_question: '스티커 모양은?' })]);
+  await assert.rejects(as(OTHER, 'select claim_check($1, $2)', [id, OTHER.id]), /permission denied/);
+  await assert.rejects(as(OTHER, 'select claim_item_judged($1, $2, true)', [id, OTHER.id]), /permission denied/);
+  await assert.rejects(as(OTHER, 'select claim_core($1, $2, null, true)', [id, OTHER.id]), /permission denied/);
+
+  const check = async (u) => (await as('service', 'select claim_check($1, $2) r', [id, u.id]))[0].r;
+  assert.deepEqual(await check(OWNER), { ok: true, quiz: true });
+  assert.equal((await check(FINDER)).ok, false, '본인 글');
+
+  const judged = async (u, ok) => (await as('service', 'select claim_item_judged($1, $2, $3) r', [id, u.id, ok]))[0].r;
+  assert.equal((await judged(OWNER, false)).left, 2);
+  assert.equal((await judged(OWNER, true)).ok, true);
+  assert.equal((await as(OTHER, 'select display_status from items_view where id = $1', [id]))[0].display_status, '수령 대기');
+  assert.equal((await as(OWNER, 'select location_detail from items_view where id = $1', [id]))[0].location_detail, '3층 열람실');
+});
