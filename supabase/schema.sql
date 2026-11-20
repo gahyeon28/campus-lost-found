@@ -162,6 +162,29 @@ create table if not exists public.notifications (
 );
 create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
 
+-- 분실 알림 동의어: 같은 group에 있는 단어끼리는 같은 물건으로 본다. Table Editor에서 줄을 추가하면 바로 반영된다.
+-- 다른 단어 안에 들어가 오탐이 나는 짧은 단어(예: '폰'은 '헤드폰'에 포함)는 넣지 않는다.
+create table if not exists public.keyword_synonyms (
+  word  text primary key check (word = lower(word) and char_length(word) >= 2),
+  grp   text not null
+);
+insert into public.keyword_synonyms (word, grp) values
+  ('에어팟','이어폰'),('airpods','이어폰'),('이어폰','이어폰'),('버즈','이어폰'),('헤드폰','이어폰'),('이어버드','이어폰'),
+  ('휴대폰','휴대폰'),('핸드폰','휴대폰'),('아이폰','휴대폰'),('갤럭시','휴대폰'),('스마트폰','휴대폰'),
+  ('노트북','노트북'),('맥북','노트북'),('랩탑','노트북'),('그램','노트북'),
+  ('아이패드','태블릿'),('태블릿','태블릿'),('갤럭시탭','태블릿'),
+  ('충전기','충전기'),('어댑터','충전기'),('케이블','충전기'),('보조배터리','충전기'),
+  ('지갑','지갑'),('카드지갑','지갑'),('반지갑','지갑'),('장지갑','지갑'),('월렛','지갑'),
+  ('학생증','신분증'),('신분증','신분증'),('사원증','신분증'),
+  ('체크카드','카드'),('신용카드','카드'),('교통카드','카드'),('카드','카드'),
+  ('우산','우산'),('양산','우산'),('장우산','우산'),
+  ('후드','옷'),('후드티','옷'),('맨투맨','옷'),('자켓','옷'),('재킷','옷'),('패딩','옷'),('가디건','옷'),('점퍼','옷'),
+  ('가방','가방'),('백팩','가방'),('에코백','가방'),('크로스백','가방'),('파우치','가방'),
+  ('교재','책'),('전공서','책'),('전공책','책'),('공책','책'),
+  ('텀블러','텀블러'),('물병','텀블러'),('보온병','텀블러'),
+  ('안경','안경'),('선글라스','안경')
+on conflict (word) do nothing;
+
 -- AI 자동 태깅 사용량 (1인당 하루 횟수 제한용)
 create table if not exists public.tag_usage (
   user_id uuid not null references auth.users on delete cascade,
@@ -181,11 +204,12 @@ alter table public.notifications   enable row level security;
 alter table public.admins          enable row level security;
 alter table public.bans            enable row level security;
 alter table public.tag_usage       enable row level security;
+alter table public.keyword_synonyms enable row level security;
 
 -- Supabase는 새 테이블에 ALL 권한을 기본 부여하므로 먼저 회수하고 필요한 것만 다시 준다.
 revoke all on public.allowed_domains, public.items, public.items_view, public.item_secrets,
               public.claim_attempts, public.reports, public.watches, public.notifications,
-              public.admins, public.bans, public.tag_usage
+              public.admins, public.bans, public.tag_usage, public.keyword_synonyms
   from anon, authenticated;
 
 -- items는 삭제에 필요한 열만 읽을 수 있다 (위치 같은 내용은 items_view로만).
@@ -453,10 +477,17 @@ begin
     where w.active
       and w.user_id <> v_item.owner_id
       and (w.category is null or w.category = v_item.category)
-      and (w.color    is null or w.color    = v_item.color)
+      and (w.color    is null or v_item.color is null or w.color = v_item.color) -- 습득자가 색을 안 고른 물건도 놓치지 않게
       and (w.building is null or w.building = v_item.building)
       and (w.lost_from is null or v_item.found_at >= w.lost_from)
-      and exists (select 1 from unnest(w.keywords) k where position(lower(trim(k)) in v_text) > 0)
+      and exists (
+        select 1 from unnest(w.keywords) k
+        where position(lower(trim(k)) in v_text) > 0
+           or exists (  -- 동의어: '에어팟'으로 등록하면 '버즈', '이어폰'이 들어간 물건도 찾는다
+                select 1 from public.keyword_synonyms a
+                join public.keyword_synonyms b on b.grp = a.grp
+                where a.word = lower(trim(k)) and position(b.word in v_text) > 0)
+      )
   ), noti as (
     insert into public.notifications (user_id, item_id, title, body)
     select distinct m.user_id, v_item.id, '찾던 물건과 비슷한 습득물이 등록됐어요',

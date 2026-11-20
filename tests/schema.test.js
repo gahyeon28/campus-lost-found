@@ -285,3 +285,18 @@ test('AI 판단 수령 신청: 서버만 호출, 오답은 기회 차감, 정답
   assert.equal((await as(OTHER, 'select display_status from items_view where id = $1', [id]))[0].display_status, '수령 대기');
   assert.equal((await as(OWNER, 'select location_detail from items_view where id = $1', [id]))[0].location_detail, '3층 열람실');
 });
+
+test('분실 알림 동의어 매칭, 색 미입력 물건도 매칭, 짧은 단어 오탐 없음', async () => {
+  // 앞 테스트의 구독: OWNER {에어팟, 전자기기, 흰색}, OTHER {에어팟, 검정}, R4 {지갑}
+  const [{ id }] = await as(FINDER, 'select create_item($1::jsonb) as id',
+    [newItem({ title: '갤럭시 버즈', description: '케이스 없음', tags: [], color: '' })]);
+  const sent = (await as('service', 'select * from notify_matches($1, $2)', [id, FINDER.id])).map((r) => r.email).sort();
+  assert.deepEqual(sent, [OTHER.email, OWNER.email].sort(), '버즈 ↔ 에어팟, 색 미입력은 색 조건 통과');
+
+  const [{ id: wallet }] = await as(FINDER, 'select create_item($1::jsonb) as id',
+    [newItem({ title: '검정 반지갑', category: '지갑/카드', color: '검정', description: '', tags: [] })]);
+  assert.deepEqual((await as('service', 'select * from notify_matches($1, $2)', [wallet, FINDER.id])).map((r) => r.email), [R4.email]);
+
+  await assert.rejects(as(OTHER, 'select * from keyword_synonyms'), /permission denied/);
+  await assert.rejects(db.query(`insert into keyword_synonyms values ('폰', '휴대폰')`), /check/);
+});
