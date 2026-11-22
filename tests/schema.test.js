@@ -300,3 +300,27 @@ test('분실 알림 동의어 매칭, 색 미입력 물건도 매칭, 짧은 단
   await assert.rejects(as(OTHER, 'select * from keyword_synonyms'), /permission denied/);
   await assert.rejects(db.query(`insert into keyword_synonyms values ('폰', '휴대폰')`), /check/);
 });
+
+test('게시물 수정: 작성자만, 보관중일 때만, 퀴즈 정답 유지/변경과 잠금 초기화', async () => {
+  const [{ id }] = await as(FINDER, `select create_item($1::jsonb, '고양이') as id`,
+    [newItem({ title: '수정 전 에어팟', quiz_question: '스티커 모양은?' })]);
+  const edit = (u, extra, ans = null) => as(u, 'select update_item($1, $2::jsonb, $3)', [id, newItem({ quiz_question: '스티커 모양은?', ...extra }), ans]);
+
+  await assert.rejects(edit(OTHER, { title: '남이 수정' }), /내가 등록한/);
+  for (const a of ['강아지', '토끼', '곰']) await as(OWNER, 'select claim_item($1, $2)', [id, a]);
+  assert.equal((await as('service', 'select claim_check($1, $2) r', [id, OWNER.id]))[0].r.locked, true);
+
+  await edit(FINDER, { title: '수정 후 에어팟', location_detail: '4층' }); // 정답 비워 두면 유지
+  const [row] = await as(FINDER, 'select title, location_detail, quiz_question from items_view where id = $1', [id]);
+  assert.deepEqual(row, { title: '수정 후 에어팟', location_detail: '4층', quiz_question: '스티커 모양은?' });
+  assert.equal((await as('service', 'select claim_check($1, $2) r', [id, OWNER.id]))[0].r.locked, true, '퀴즈 그대로면 잠금 유지');
+
+  await edit(FINDER, { title: '수정 후 에어팟' }, '강아지'); // 정답 변경 → 잠금 초기화
+  assert.equal((await as(OWNER, `select claim_item($1, '강아지') r`, [id]))[0].r.ok, true);
+  await assert.rejects(edit(FINDER, { title: '수령 대기 중 수정' }), /수정할 수 없습니다/);
+
+  const [{ id: plain }] = await as(FINDER, 'select create_item($1::jsonb) as id', [newItem({ title: '퀴즈 없는 물건' })]);
+  await assert.rejects(as(FINDER, 'select update_item($1, $2::jsonb)', [plain, newItem({ quiz_question: '새 질문' })]), /정답/);
+  await assert.rejects(as(FINDER, 'select update_item($1, $2::jsonb)', [plain, newItem({ storage_detail: '' })]), /맡긴 장소/);
+  await assert.rejects(as(FINDER, 'select check_item_payload($1::jsonb)', [newItem()]), /permission denied/);
+});

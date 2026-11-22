@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { RequireAuth, useAuth } from '@/components/AuthProvider';
 import { StatusBadge, Thumb, formatDateTime } from '@/components/ItemCard';
@@ -158,7 +159,12 @@ function Detail() {
         )}
         {item.status === '수령 대기' && !isOwner && !isClaimant && <div className="box purple">다른 사람이 수령 신청한 물건이에요.</div>}
         {open && !isOwner && <ClaimBox item={item} onDone={(m) => { setFlash({ ok: m + ' 보관 위치에서 물건을 찾아가세요.' }); load(); }} />}
-        {open && isOwner && <button className="danger" onClick={remove}>게시물 삭제</button>}
+        {open && isOwner && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Link href={`/items/${item.id}/edit`} className="btn">게시물 수정</Link>
+            <button className="danger" onClick={remove}>게시물 삭제</button>
+          </div>
+        )}
         {!isOwner && <ReportBox itemId={item.id} />}
       </div>
     </>

@@ -253,6 +253,25 @@ create or replace function public.normalize_answer(t text)
 returns text language sql immutable
 as $$ select lower(regexp_replace(coalesce(t, ''), '[\s\-_.,!?"''~]', '', 'g')) $$;
 
+-- 등록·수정 공통 입력 검사 (문제가 있으면 예외)
+create or replace function public.check_item_payload(p jsonb)
+returns void
+language plpgsql stable security definer set search_path = public
+as $$
+declare v_img text := nullif(p ->> 'image_path', '');
+begin
+  if v_img is not null and v_img not like auth.uid()::text || '/%' then
+    raise exception '잘못된 이미지 경로입니다.';
+  end if;
+  if (p ->> 'found_at')::timestamptz > now() + interval '10 minutes' then
+    raise exception '습득 시각이 미래일 수 없습니다.';
+  end if;
+  if p ->> 'storage_type' = '근처 공용 장소에 맡김' and coalesce(trim(p ->> 'storage_detail'), '') = '' then
+    raise exception '맡긴 장소를 적어주세요.';
+  end if;
+end;
+$$;
+
 -- 습득물 등록 (정답 저장까지 한 트랜잭션)
 create or replace function public.create_item(p jsonb, p_answer text default null)
 returns bigint
@@ -272,15 +291,7 @@ begin
   if v_quiz is not null and coalesce(trim(p_answer), '') = '' then
     raise exception '확인 퀴즈의 정답을 입력해주세요.';
   end if;
-  if v_img is not null and v_img not like auth.uid()::text || '/%' then
-    raise exception '잘못된 이미지 경로입니다.';
-  end if;
-  if (p ->> 'found_at')::timestamptz > now() + interval '10 minutes' then
-    raise exception '습득 시각이 미래일 수 없습니다.';
-  end if;
-  if p ->> 'storage_type' = '근처 공용 장소에 맡김' and coalesce(trim(p ->> 'storage_detail'), '') = '' then
-    raise exception '맡긴 장소를 적어주세요.';
-  end if;
+  perform public.check_item_payload(p);
 
   insert into public.items (owner_id, title, category, color, brand, tags, description, building,
                             location_detail, storage_type, storage_detail, lat, lng, found_at,
@@ -299,6 +310,62 @@ begin
     insert into public.item_secrets (item_id, answer) values (v_id, trim(p_answer));
   end if;
   return v_id;
+end;
+$$;
+
+-- 습득물 수정: 작성자만, 보관중일 때만. p_answer가 비어 있으면 기존 퀴즈 정답을 유지한다.
+-- 퀴즈 질문이나 정답이 바뀌면 이전 오답 기록(잠금)을 초기화한다.
+create or replace function public.update_item(p_item_id bigint, p jsonb, p_answer text default null)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_item public.items;
+  v_quiz text := nullif(trim(p ->> 'quiz_question'), '');
+  v_ans  text := nullif(trim(p_answer), '');
+  v_had_secret boolean;
+begin
+  if auth.uid() is null or not public.is_school_email() then
+    raise exception '학교 이메일로 로그인해야 합니다.';
+  end if;
+  if public.is_banned() then
+    raise exception '이용이 정지된 계정입니다.';
+  end if;
+  select * into v_item from public.items where id = p_item_id for update;
+  if not found or v_item.owner_id <> auth.uid() then
+    raise exception '내가 등록한 게시물만 수정할 수 있습니다.';
+  end if;
+  if v_item.status <> '보관중' then
+    raise exception '수령 신청이 들어온 뒤에는 수정할 수 없습니다.';
+  end if;
+  v_had_secret := exists (select 1 from public.item_secrets where item_id = p_item_id);
+  if v_quiz is not null and v_ans is null and not v_had_secret then
+    raise exception '확인 퀴즈의 정답을 입력해주세요.';
+  end if;
+  perform public.check_item_payload(p);
+
+  update public.items set
+    title = trim(p ->> 'title'), category = p ->> 'category', color = nullif(p ->> 'color', ''),
+    brand = nullif(trim(p ->> 'brand'), ''),
+    tags = coalesce(array(select jsonb_array_elements_text(coalesce(p -> 'tags', '[]'::jsonb))), '{}'),
+    description = coalesce(trim(p ->> 'description'), ''), building = p ->> 'building',
+    location_detail = coalesce(trim(p ->> 'location_detail'), ''), storage_type = p ->> 'storage_type',
+    storage_detail = coalesce(trim(p ->> 'storage_detail'), ''),
+    lat = (p ->> 'lat')::double precision, lng = (p ->> 'lng')::double precision,
+    found_at = (p ->> 'found_at')::timestamptz,
+    image_path = coalesce(nullif(p ->> 'image_path', ''), v_item.image_path),
+    quiz_question = v_quiz
+  where id = p_item_id;
+
+  if v_quiz is null then
+    delete from public.item_secrets where item_id = p_item_id;
+  elsif v_ans is not null then
+    insert into public.item_secrets (item_id, answer) values (p_item_id, v_ans)
+    on conflict (item_id) do update set answer = excluded.answer;
+  end if;
+  if v_quiz is distinct from v_item.quiz_question or v_ans is not null then
+    delete from public.claim_attempts where item_id = p_item_id;
+  end if;
 end;
 $$;
 
@@ -641,6 +708,8 @@ end;
 $$;
 
 -- 함수 실행 권한: 기본(public) 권한을 회수하고 필요한 것만 부여
+revoke execute on function public.check_item_payload(jsonb), public.update_item(bigint, jsonb, text) from public, anon;
+revoke execute on function public.check_item_payload(jsonb) from authenticated;
 revoke execute on function public.create_item(jsonb, text), public.claim_item(bigint, text),
   public.complete_item(bigint), public.cancel_claim(bigint), public.notify_matches(bigint, uuid),
   public.on_report(), public.enforce_school_email(), public.is_school_email(text),
@@ -648,6 +717,7 @@ revoke execute on function public.create_item(jsonb, text), public.claim_item(bi
   public.admin_reported_items(), public.admin_users(), public.admin_set_hidden(bigint, boolean),
   public.admin_delete_item(bigint), public.admin_ban(uuid, text), public.admin_unban(uuid)
   from public, anon;
+grant execute on function public.update_item(bigint, jsonb, text) to authenticated;
 grant execute on function public.create_item(jsonb, text), public.claim_item(bigint, text),
   public.complete_item(bigint), public.cancel_claim(bigint), public.is_school_email(text),
   public.is_admin(), public.is_banned(), public.assert_admin(),
