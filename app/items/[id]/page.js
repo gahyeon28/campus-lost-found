@@ -145,7 +145,7 @@ function Detail() {
 
       <div className="section stack">
         {item.display_status === '장기 미수령' && (
-          <div className="box red">습득 후 한 달이 지난 장기 미수령 물건이에요. 주인이 나타나지 않으면 학교 유실물 센터로 옮겨주세요.</div>
+          <div className="box red">습득 후 한 달이 지나도록 주인이 나타나지 않은 장기 미수령 물건이에요.</div>
         )}
         {item.status === '수령 대기' && (isOwner || isClaimant) && (
           <div className="box purple stack">
