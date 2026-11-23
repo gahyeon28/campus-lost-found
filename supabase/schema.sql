@@ -133,8 +133,21 @@ create table if not exists public.reports (
   reporter_id uuid not null default auth.uid() references auth.users on delete cascade,
   reason      text not null check (reason in ('허위 게시물','부적절한 사진/내용','개인정보 노출','이미 반환됨','기타')),
   detail      text not null default '' check (char_length(detail) <= 300),
-  created_at  timestamptz not null default now(),
-  unique (item_id, reporter_id)
+  created_at  timestamptz not null default now()
+);
+-- 관리자가 검토한 신고는 지우지 않고 reviewed로 남긴다. 검토 뒤에는 같은 사람이 다시 신고할 수 있다.
+alter table public.reports add column if not exists reviewed boolean not null default false;
+alter table public.reports drop constraint if exists reports_item_id_reporter_id_key;
+create unique index if not exists reports_open_unique on public.reports (item_id, reporter_id) where not reviewed;
+
+-- 관리자 처리 기록
+create table if not exists public.admin_logs (
+  id          bigint generated always as identity primary key,
+  admin_email text not null,
+  action      text not null,
+  target      text not null default '',
+  detail      text not null default '',
+  created_at  timestamptz not null default now()
 );
 
 -- ── 3. 분실 알림(키워드 구독) & 알림함 ───────────────────────
@@ -205,11 +218,13 @@ alter table public.admins          enable row level security;
 alter table public.bans            enable row level security;
 alter table public.tag_usage       enable row level security;
 alter table public.keyword_synonyms enable row level security;
+alter table public.admin_logs      enable row level security;
 
 -- Supabase는 새 테이블에 ALL 권한을 기본 부여하므로 먼저 회수하고 필요한 것만 다시 준다.
 revoke all on public.allowed_domains, public.items, public.items_view, public.item_secrets,
               public.claim_attempts, public.reports, public.watches, public.notifications,
-              public.admins, public.bans, public.tag_usage, public.keyword_synonyms
+              public.admins, public.bans, public.tag_usage, public.keyword_synonyms,
+              public.admin_logs
   from anon, authenticated;
 
 -- items는 삭제에 필요한 열만 읽을 수 있다 (위치 같은 내용은 items_view로만).
@@ -505,7 +520,7 @@ language plpgsql security definer set search_path = public
 as $$
 declare v_owner uuid; v_title text;
 begin
-  if (select count(*) from public.reports where item_id = new.item_id) >= 3 then
+  if (select count(*) from public.reports where item_id = new.item_id and not reviewed) >= 3 then
     update public.items set hidden = true where id = new.item_id and not hidden
     returning owner_id, title into v_owner, v_title;
     if v_owner is not null then
@@ -594,6 +609,15 @@ begin
 end;
 $$;
 
+-- 관리자 처리 기록 남기기 (관리자 함수 안에서만 호출)
+create or replace function public.log_admin(p_action text, p_target text, p_detail text default '')
+returns void
+language sql security definer set search_path = public
+as $$
+  insert into public.admin_logs (admin_email, action, target, detail)
+  values (lower(auth.jwt() ->> 'email'), p_action, coalesce(p_target, ''), coalesce(p_detail, ''));
+$$;
+
 -- 신고가 1건 이상 들어온 게시물, 신고 많은 순
 create or replace function public.admin_reported_items()
 returns table (item_id bigint, title text, building text, status text, hidden boolean,
@@ -611,7 +635,7 @@ begin
          jsonb_agg(jsonb_build_object('reason', r.reason, 'detail', r.detail, 'at', r.created_at)
                    order by r.created_at desc)
   from public.items i
-  join public.reports r on r.item_id = i.id
+  join public.reports r on r.item_id = i.id and not r.reviewed
   left join auth.users u on u.id = i.owner_id
   group by i.id, u.email
   order by count(r.id) desc, max(r.created_at) desc;
@@ -655,8 +679,9 @@ begin
   update public.items set hidden = p_hidden where id = p_item_id returning owner_id, title into v_owner, v_title;
   if not found then raise exception '게시물을 찾을 수 없습니다.'; end if;
   if not p_hidden then
-    delete from public.reports where item_id = p_item_id;
+    update public.reports set reviewed = true where item_id = p_item_id and not reviewed;
   end if;
+  perform public.log_admin(case when p_hidden then '게시물 숨김' else '숨김 해제' end, v_title, format('게시물 #%s', p_item_id));
   insert into public.notifications (user_id, item_id, title, body)
   values (v_owner, p_item_id,
           case when p_hidden then '관리자가 게시물을 숨겼어요' else '게시물 숨김이 해제되었어요' end,
@@ -668,10 +693,12 @@ create or replace function public.admin_delete_item(p_item_id bigint)
 returns void
 language plpgsql security definer set search_path = public
 as $$
+declare v_title text;
 begin
   perform public.assert_admin();
-  delete from public.items where id = p_item_id;
+  delete from public.items where id = p_item_id returning title into v_title;
   if not found then raise exception '게시물을 찾을 수 없습니다.'; end if;
+  perform public.log_admin('게시물 삭제', v_title, format('게시물 #%s', p_item_id));
 end;
 $$;
 
@@ -688,6 +715,7 @@ begin
   insert into public.bans (user_id, reason) values (p_user_id, coalesce(p_reason, ''))
   on conflict (user_id) do update set reason = excluded.reason, banned_at = now();
   update public.items set hidden = true where owner_id = p_user_id and status <> '수령 완료';
+  perform public.log_admin('이용 정지', (select email from auth.users where id = p_user_id), p_reason);
   insert into public.notifications (user_id, title, body)
   values (p_user_id, '이용이 정지되었어요',
           coalesce(nullif(p_reason, ''), '운영 정책 위반') || ' 사유로 게시물 등록, 수령 신청, 신고가 제한됩니다.');
@@ -702,10 +730,74 @@ begin
   perform public.assert_admin();
   delete from public.bans where user_id = p_user_id;
   if not found then raise exception '정지된 사용자가 아닙니다.'; end if;
+  perform public.log_admin('정지 해제', (select email from auth.users where id = p_user_id));
   insert into public.notifications (user_id, title, body)
   values (p_user_id, '이용 정지가 해제되었어요', '다시 모든 기능을 이용할 수 있습니다. 숨겨진 게시물은 관리자 검토 후 공개됩니다.');
 end;
 $$;
+
+-- 관리자 목록·추가·삭제 (관리자 화면에서)
+create or replace function public.admin_list_admins()
+returns table (email text)
+language plpgsql stable security definer set search_path = public
+as $$
+#variable_conflict use_column
+begin
+  perform public.assert_admin();
+  return query select a.email from public.admins a order by a.email;
+end;
+$$;
+
+create or replace function public.admin_add_admin(p_email text)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+declare v_email text := lower(trim(p_email));
+begin
+  perform public.assert_admin();
+  if not public.is_school_email(v_email) then
+    raise exception '학교 이메일만 관리자로 추가할 수 있습니다.';
+  end if;
+  insert into public.admins (email) values (v_email) on conflict do nothing;
+  if not found then raise exception '이미 관리자입니다.'; end if;
+  perform public.log_admin('관리자 추가', v_email);
+end;
+$$;
+
+create or replace function public.admin_remove_admin(p_email text)
+returns void
+language plpgsql security definer set search_path = public
+as $$
+declare v_email text := lower(trim(p_email));
+begin
+  perform public.assert_admin();
+  if v_email = lower(auth.jwt() ->> 'email') then
+    raise exception '자기 자신은 관리자에서 뺄 수 없습니다. 다른 관리자에게 요청하세요.';
+  end if;
+  delete from public.admins where email = v_email;
+  if not found then raise exception '관리자 목록에 없는 메일입니다.'; end if;
+  perform public.log_admin('관리자 삭제', v_email);
+end;
+$$;
+
+-- 최근 처리 기록 200건
+create or replace function public.admin_logs_list()
+returns table (admin_email text, action text, target text, detail text, created_at timestamptz)
+language plpgsql stable security definer set search_path = public
+as $$
+#variable_conflict use_column
+begin
+  perform public.assert_admin();
+  return query select l.admin_email, l.action, l.target, l.detail, l.created_at
+               from public.admin_logs l order by l.created_at desc, l.id desc limit 200;
+end;
+$$;
+
+revoke execute on function public.log_admin(text, text, text) from public, anon, authenticated;
+revoke execute on function public.admin_list_admins(), public.admin_add_admin(text), public.admin_remove_admin(text),
+  public.admin_logs_list() from public, anon;
+grant execute on function public.admin_list_admins(), public.admin_add_admin(text), public.admin_remove_admin(text),
+  public.admin_logs_list() to authenticated;
 
 -- 함수 실행 권한: 기본(public) 권한을 회수하고 필요한 것만 부여
 revoke execute on function public.check_item_payload(jsonb), public.update_item(bigint, jsonb, text) from public, anon;

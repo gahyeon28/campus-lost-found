@@ -11,14 +11,22 @@ function Admin() {
   const [tab, setTab] = useState('reports');
   const [reports, setReports] = useState([]);
   const [users, setUsers] = useState([]);
+  const [admins, setAdmins] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [newAdmin, setNewAdmin] = useState('');
   const [flash, setFlash] = useState(null);
 
   const load = useCallback(async () => {
     const sb = supabase();
-    const [r, u] = await Promise.all([sb.rpc('admin_reported_items'), sb.rpc('admin_users')]);
-    if (r.error || u.error) setFlash({ error: (r.error || u.error).message });
+    const [r, u, a, l] = await Promise.all([
+      sb.rpc('admin_reported_items'), sb.rpc('admin_users'), sb.rpc('admin_list_admins'), sb.rpc('admin_logs_list'),
+    ]);
+    const err = r.error || u.error || a.error || l.error;
+    if (err) setFlash({ error: err.message });
     setReports(r.data || []);
     setUsers(u.data || []);
+    setAdmins(a.data || []);
+    setLogs(l.data || []);
   }, []);
 
   useEffect(() => {
@@ -49,9 +57,11 @@ function Admin() {
       <h2>관리자</h2>
       <p className="muted">신고된 게시물과 주의가 필요한 사용자를 관리해요. 처리 결과는 해당 사용자의 알림함으로 전달돼요.</p>
 
-      <div style={{ display: 'flex', gap: 8, margin: '12px 0 16px' }}>
+      <div style={{ display: 'flex', gap: 8, margin: '12px 0 16px', flexWrap: 'wrap' }}>
         <button className={tab === 'reports' ? 'primary' : ''} onClick={() => setTab('reports')}>신고된 게시물 ({reports.length})</button>
         <button className={tab === 'users' ? 'primary' : ''} onClick={() => setTab('users')}>주의 사용자 ({users.length})</button>
+        <button className={tab === 'admins' ? 'primary' : ''} onClick={() => setTab('admins')}>관리자 ({admins.length})</button>
+        <button className={tab === 'logs' ? 'primary' : ''} onClick={() => setTab('logs')}>처리 기록</button>
       </div>
 
       {flash && <div className={`box ${flash.error ? 'red' : 'green'}`} style={{ marginBottom: 14 }}>{flash.error || flash.ok}</div>}
@@ -81,7 +91,7 @@ function Admin() {
                 </ul>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {r.hidden
-                    ? <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: false }, '숨김을 해제했어요. 기존 신고는 검토 완료로 정리됐어요.', '숨김을 해제할까요? 기존 신고 기록은 정리됩니다.')}>숨김 해제</button>
+                    ? <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: false }, '숨김을 해제했어요. 기존 신고는 검토 완료로 기록됐어요.', '숨김을 해제할까요? 기존 신고는 검토 완료로 처리됩니다.')}>숨김 해제</button>
                     : <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: true }, '게시물을 숨겼어요.')}>숨기기</button>}
                   <button className="danger" onClick={() => run('admin_delete_item', { p_item_id: r.item_id }, '게시물을 삭제했어요.', '이 게시물을 완전히 삭제할까요? 되돌릴 수 없어요.')}>삭제</button>
                   {r.owner_banned
@@ -127,6 +137,50 @@ function Admin() {
             <p className="muted" style={{ marginTop: 10 }}>
               잠긴 물건: 퀴즈를 3번 틀려 수령 신청이 잠긴 물건 수. 여러 물건에서 잠겼다면 남의 물건을 노리는 사용자일 수 있어요.
             </p>
+          </div>
+        )
+      )}
+
+      {tab === 'admins' && (
+        <div className="card stack">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              run('admin_add_admin', { p_email: newAdmin }, `${newAdmin} 을(를) 관리자로 추가했어요.`);
+              setNewAdmin('');
+            }}
+            style={{ display: 'flex', gap: 8, flexDirection: 'row', flexWrap: 'wrap' }}
+          >
+            <input type="email" required placeholder="추가할 학교 메일" value={newAdmin} onChange={(e) => setNewAdmin(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+            <button className="primary">관리자 추가</button>
+          </form>
+          <div className="list">
+            {admins.map((a) => (
+              <div key={a.email} className="list-item">
+                <span>{a.email}</span>
+                <button className="danger" onClick={() => run('admin_remove_admin', { p_email: a.email }, `${a.email} 을(를) 관리자에서 뺐어요.`, `${a.email} 을(를) 관리자에서 뺄까요?`)}>빼기</button>
+              </div>
+            ))}
+          </div>
+          <p className="muted">학교 메일만 추가할 수 있어요. 자기 자신은 뺄 수 없어서 관리자가 아무도 없어지는 일은 없어요.</p>
+        </div>
+      )}
+
+      {tab === 'logs' && (
+        logs.length === 0 ? <p className="muted center">처리 기록이 없어요.</p> : (
+          <div className="card" style={{ overflowX: 'auto' }}>
+            <table className="info" style={{ minWidth: 600 }}>
+              <thead>
+                <tr className="muted" style={{ textAlign: 'left' }}><th>시각</th><th>관리자</th><th>처리</th><th>대상</th><th>내용</th></tr>
+              </thead>
+              <tbody>
+                {logs.map((l, i) => (
+                  <tr key={i}>
+                    <td>{formatDateTime(l.created_at)}</td><td>{l.admin_email}</td><td><b>{l.action}</b></td><td>{l.target}</td><td className="muted">{l.detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )
       )}

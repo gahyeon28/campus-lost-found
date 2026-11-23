@@ -324,3 +324,36 @@ test('게시물 수정: 작성자만, 보관중일 때만, 퀴즈 정답 유지/
   await assert.rejects(as(FINDER, 'select update_item($1, $2::jsonb)', [plain, newItem({ storage_detail: '' })]), /맡긴 장소/);
   await assert.rejects(as(FINDER, 'select check_item_payload($1::jsonb)', [newItem()]), /permission denied/);
 });
+
+test('관리 기능 보강: 관리자 추가·삭제, 처리 기록, 신고 기록 보존', async () => {
+  for (const fn of ['admin_list_admins()', 'admin_logs_list()', `admin_add_admin('x@school.ac.kr')`]) {
+    await assert.rejects(as(OTHER, `select * from ${fn}`), /관리자만/);
+  }
+  await assert.rejects(as(ADMIN, `select admin_add_admin('someone@gmail.com')`), /학교 이메일/);
+  await as(ADMIN, `select admin_add_admin(' Finder@School.ac.kr ')`);
+  assert.ok((await as(ADMIN, 'select * from admin_list_admins()')).some((r) => r.email === FINDER.email));
+  assert.equal((await as(FINDER, 'select is_admin() a'))[0].a, true);
+  await assert.rejects(as(ADMIN, `select admin_add_admin($1)`, [FINDER.email]), /이미/);
+  await assert.rejects(as(ADMIN, `select admin_remove_admin($1)`, [ADMIN.email]), /자기 자신/);
+  await as(ADMIN, `select admin_remove_admin($1)`, [FINDER.email]);
+  assert.equal((await as(FINDER, 'select is_admin() a'))[0].a, false);
+
+  // 신고 → 자동 숨김 → 숨김 해제해도 신고 기록은 남고(reviewed), 같은 사람이 다시 신고 가능
+  const [{ id }] = await as(R4, 'select create_item($1::jsonb) as id', [newItem({ title: '기록 보존 테스트' })]);
+  for (const u of [FINDER, OWNER, OTHER]) await as(u, `insert into reports (item_id, reason) values ($1, '허위 게시물')`, [id]);
+  await as(ADMIN, 'select admin_set_hidden($1, false)', [id]);
+  assert.equal((await as('service', 'select count(*)::int n from reports where item_id = $1 and reviewed', [id]))[0].n, 3);
+  assert.equal((await as(ADMIN, 'select * from admin_reported_items()')).filter((r) => r.item_id == id).length, 0);
+  await as(FINDER, `insert into reports (item_id, reason) values ($1, '기타')`, [id]);
+  await assert.rejects(as(FINDER, `insert into reports (item_id, reason) values ($1, '기타')`, [id]), /duplicate/);
+  assert.equal((await as(OTHER, 'select id from items_view where id = $1', [id])).length, 1, '검토 후 신고 1건으로는 다시 숨겨지지 않음');
+
+  await as(ADMIN, 'select admin_delete_item($1)', [id]);
+  const logs = await as(ADMIN, 'select * from admin_logs_list()');
+  const actions = logs.map((l) => l.action);
+  for (const a of ['게시물 삭제', '숨김 해제', '관리자 삭제', '관리자 추가']) assert.ok(actions.includes(a), a);
+  assert.equal(logs.find((l) => l.action === '게시물 삭제').target, '기록 보존 테스트');
+  assert.ok(logs.every((l) => l.admin_email === ADMIN.email));
+  await assert.rejects(as(ADMIN, 'select * from admin_logs'), /permission denied/);
+  await assert.rejects(as(ADMIN, `select log_admin('가짜', 'x')`), /permission denied/);
+});
