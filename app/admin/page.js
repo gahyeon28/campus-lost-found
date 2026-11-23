@@ -92,7 +92,10 @@ function Admin() {
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {r.hidden
                     ? <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: false }, '숨김을 해제했어요. 기존 신고는 검토 완료로 기록됐어요.', '숨김을 해제할까요? 기존 신고는 검토 완료로 처리됩니다.')}>숨김 해제</button>
-                    : <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: true }, '게시물을 숨겼어요.')}>숨기기</button>}
+                    : <>
+                        <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: true }, '게시물을 숨겼어요.')}>숨기기</button>
+                        <button onClick={() => run('admin_set_hidden', { p_item_id: r.item_id, p_hidden: false }, '신고를 기각했어요. 신고한 사람의 기각 기록에 남아요.', '문제없는 게시물로 보고 신고를 기각할까요?')}>신고 기각</button>
+                      </>}
                   <button className="danger" onClick={() => run('admin_delete_item', { p_item_id: r.item_id }, '게시물을 삭제했어요.', '이 게시물을 완전히 삭제할까요? 되돌릴 수 없어요.')}>삭제</button>
                   {r.owner_banned
                     ? <button onClick={() => run('admin_unban', { p_user_id: r.owner_id }, '정지를 해제했어요.')}>작성자 정지 해제</button>
@@ -107,10 +110,10 @@ function Admin() {
       {tab === 'users' && (
         users.length === 0 ? <p className="muted center">주의가 필요한 사용자가 없어요.</p> : (
           <div className="card" style={{ overflowX: 'auto' }}>
-            <table className="info" style={{ minWidth: 640 }}>
+            <table className="info" style={{ minWidth: 760 }}>
               <thead>
                 <tr className="muted" style={{ textAlign: 'left' }}>
-                  <th>이메일</th><th>게시물</th><th>받은 신고</th><th>퀴즈 오답</th><th>잠긴 물건</th><th>수령 신청</th><th></th>
+                  <th>이메일</th><th>게시물</th><th>받은 신고</th><th>한 신고</th><th>기각된 신고</th><th>퀴즈 오답</th><th>잠긴 물건</th><th>수령 신청</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -122,6 +125,8 @@ function Admin() {
                     </td>
                     <td>{u.item_count}</td>
                     <td>{u.reports_received}</td>
+                    <td>{u.reports_filed}</td>
+                    <td className={u.reports_rejected >= 3 ? 'error' : ''}>{u.reports_rejected}</td>
                     <td>{u.failed_attempts}</td>
                     <td>{u.locked_items}</td>
                     <td>{u.claim_count}</td>
@@ -136,6 +141,7 @@ function Admin() {
             </table>
             <p className="muted" style={{ marginTop: 10 }}>
               잠긴 물건: 퀴즈를 3번 틀려 수령 신청이 잠긴 물건 수. 여러 물건에서 잠겼다면 남의 물건을 노리는 사용자일 수 있어요.
+              <br />기각된 신고: 관리자가 문제없다고 판단한(숨김 해제·신고 기각) 게시물에 이 사람이 했던 신고 수. 3건 이상이면 이후 신고는 자동 숨김 계산에서 빠지고, 관리자 화면에만 올라와요.
             </p>
           </div>
         )

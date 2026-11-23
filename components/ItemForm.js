@@ -127,6 +127,9 @@ export default function ItemForm({ item }) {
           {editing ? '사진 바꾸기 (선택)' : '사진 (권장 · 학생증·카드 번호가 보이지 않게 찍어주세요)'}
           <input type="file" accept="image/*" onChange={onPhoto} />
         </label>
+        <div className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+          지갑·전자기기 같은 고가품은 퀴즈로 낼 만한 특징(스티커, 각인, 키링, 지갑 속 내용물 등)이 사진에 보이지 않게 가리거나 뒷면만 찍어주세요. 사진에 보이면 누구나 퀴즈를 맞힐 수 있어요.
+        </div>
         {photo && <img src={photo.preview} alt="미리보기" style={{ maxWidth: 260, borderRadius: 12 }} />}
         {ai.msg && <div className={`box ${ai.state === 'error' ? 'red' : 'purple'}`}>{ai.msg}</div>}
 
@@ -183,6 +186,7 @@ export default function ItemForm({ item }) {
           <div className="muted" style={{ marginTop: 4 }}>
             {quizRecommended ? '고가품이거나 특징이 있는 물건이라 퀴즈를 권장해요.' : '우산·텀블러처럼 흔한 물건은 퀴즈 없이 올려도 괜찮아요.'}
             {' '}퀴즈를 맞힌 사람만 수령 신청할 수 있어요. 정답은 공개되지 않아요.
+            {form.use_quiz && ' 퀴즈 정답이 사진이나 설명에 드러나지 않았는지 꼭 확인해주세요.'}
             {form.use_quiz && ' 퀴즈를 켜면 건물 이름만 공개되고, 상세 위치와 맡긴 곳은 퀴즈를 통과한 사람에게만 보여요. 경비실이나 과사무실처럼 사람이 있는 곳에 맡기는 걸 권장해요.'}
           </div>
           {form.use_quiz && (

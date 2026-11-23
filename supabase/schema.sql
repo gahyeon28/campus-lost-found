@@ -513,14 +513,17 @@ begin
 end;
 $$;
 
--- 신고 3건이 쌓이면 자동 숨김
+-- 서로 다른 3명의 신고가 쌓이면 자동 숨김
 create or replace function public.on_report()
 returns trigger
 language plpgsql security definer set search_path = public
 as $$
 declare v_owner uuid; v_title text;
 begin
-  if (select count(*) from public.reports where item_id = new.item_id and not reviewed) >= 3 then
+  -- 신고가 3번 이상 기각된 사람의 신고는 관리자 화면에는 올라가지만 자동 숨김 계산에서는 뺀다.
+  if (select count(*) from public.reports r
+      where r.item_id = new.item_id and not r.reviewed
+        and (select count(*) from public.reports x where x.reporter_id = r.reporter_id and x.reviewed) < 3) >= 3 then
     update public.items set hidden = true where id = new.item_id and not hidden
     returning owner_id, title into v_owner, v_title;
     if v_owner is not null then
@@ -643,9 +646,12 @@ end;
 $$;
 
 -- 주의가 필요한 사용자: 정지됐거나, 내 게시물이 신고됐거나, 퀴즈 오답 기록이 있는 사람
+-- 반환 칸이 바뀌어 기존 함수를 지우고 다시 만든다.
+drop function if exists public.admin_users();
 create or replace function public.admin_users()
 returns table (user_id uuid, email text, banned boolean, ban_reason text, item_count bigint,
-               reports_received bigint, failed_attempts bigint, locked_items bigint, claim_count bigint)
+               reports_received bigint, reports_filed bigint, reports_rejected bigint,
+               failed_attempts bigint, locked_items bigint, claim_count bigint)
 language plpgsql stable security definer set search_path = public
 as $$
 #variable_conflict use_column
@@ -655,6 +661,9 @@ begin
   select u.id, u.email::text, b.user_id is not null, b.reason,
          (select count(*) from public.items i where i.owner_id = u.id),
          (select count(*) from public.reports r join public.items i on i.id = r.item_id where i.owner_id = u.id),
+         (select count(*) from public.reports r where r.reporter_id = u.id),
+         -- reviewed = 관리자가 숨김 해제·신고 기각으로 문제없다고 본 신고
+         (select count(*) from public.reports r where r.reporter_id = u.id and r.reviewed),
          (select count(*) from public.claim_attempts c where c.user_id = u.id),
          (select count(*) from (select c.item_id from public.claim_attempts c where c.user_id = u.id
                                 group by c.item_id having count(*) >= 3) x),
@@ -663,8 +672,9 @@ begin
   left join public.bans b on b.user_id = u.id
   where b.user_id is not null
      or exists (select 1 from public.reports r join public.items i on i.id = r.item_id where i.owner_id = u.id)
+     or exists (select 1 from public.reports r where r.reporter_id = u.id and r.reviewed)
      or exists (select 1 from public.claim_attempts c where c.user_id = u.id)
-  order by 3 desc, 6 desc, 7 desc;
+  order by 3 desc, 8 desc, 6 desc, 9 desc;
 end;
 $$;
 
@@ -673,15 +683,19 @@ create or replace function public.admin_set_hidden(p_item_id bigint, p_hidden bo
 returns void
 language plpgsql security definer set search_path = public
 as $$
-declare v_owner uuid; v_title text;
+declare v_owner uuid; v_title text; v_was boolean;
 begin
   perform public.assert_admin();
+  select hidden into v_was from public.items where id = p_item_id;
   update public.items set hidden = p_hidden where id = p_item_id returning owner_id, title into v_owner, v_title;
   if not found then raise exception '게시물을 찾을 수 없습니다.'; end if;
+  -- 숨겨지지 않은 게시물에 false를 주면 '신고 기각': 신고만 검토 완료로 돌리고 작성자 알림은 보내지 않는다.
   if not p_hidden then
     update public.reports set reviewed = true where item_id = p_item_id and not reviewed;
   end if;
-  perform public.log_admin(case when p_hidden then '게시물 숨김' else '숨김 해제' end, v_title, format('게시물 #%s', p_item_id));
+  perform public.log_admin(case when p_hidden then '게시물 숨김' when v_was then '숨김 해제' else '신고 기각' end,
+                           v_title, format('게시물 #%s', p_item_id));
+  if v_was = p_hidden then return; end if;
   insert into public.notifications (user_id, item_id, title, body)
   values (v_owner, p_item_id,
           case when p_hidden then '관리자가 게시물을 숨겼어요' else '게시물 숨김이 해제되었어요' end,

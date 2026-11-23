@@ -357,3 +357,30 @@ test('관리 기능 보강: 관리자 추가·삭제, 처리 기록, 신고 기�
   await assert.rejects(as(ADMIN, 'select * from admin_logs'), /permission denied/);
   await assert.rejects(as(ADMIN, `select log_admin('가짜', 'x')`), /permission denied/);
 });
+
+test('허위 신고 반복: 기각된 신고가 3건 이상이면 그 사람의 신고는 자동 숨김에 세지 않는다', async () => {
+  const mk = (n) => ({ id: `6666666${n}-6666-6666-6666-666666666666`, email: `u${n}@school.ac.kr` });
+  const [BAD, A, B, C] = [mk(0), mk(1), mk(2), mk(3)];
+  for (const u of [BAD, A, B, C]) await db.query('insert into auth.users (id, email) values ($1, $2)', [u.id, u.email]);
+
+  for (let k = 0; k < 3; k++) {
+    const [{ id }] = await as(R4, 'select create_item($1::jsonb) as id', [newItem({ title: `정상 게시물 ${k}` })]);
+    await as(BAD, `insert into reports (item_id, reason) values ($1, '허위 게시물')`, [id]);
+    await as(ADMIN, 'select admin_set_hidden($1, false)', [id]); // 숨겨지지 않은 게시물 → 신고 기각
+    assert.equal((await as(ADMIN, 'select * from admin_reported_items()')).filter((r) => r.item_id == id).length, 0);
+  }
+  assert.ok((await as(ADMIN, 'select * from admin_logs_list()')).some((l) => l.action === '신고 기각'));
+  const bad = (await as(ADMIN, 'select * from admin_users()')).find((u) => u.email === BAD.email);
+  assert.equal(Number(bad.reports_rejected), 3);
+  assert.equal(Number(bad.reports_filed), 3);
+
+  const before = (await as(R4, 'select count(*)::int n from notifications'))[0].n;
+  const [{ id }] = await as(R4, 'select create_item($1::jsonb) as id', [newItem({ title: '자동 숨김 계산 테스트' })]);
+  for (const u of [BAD, A, B]) await as(u, `insert into reports (item_id, reason) values ($1, '허위 게시물')`, [id]);
+  assert.equal((await as(OTHER, 'select id from items_view where id = $1', [id])).length, 1, 'BAD 신고는 세지 않아 아직 보임');
+  assert.equal(Number((await as(ADMIN, 'select * from admin_reported_items()')).find((r) => r.item_id == id).report_count), 3, '관리자에게는 3건 모두 보임');
+  await as(C, `insert into reports (item_id, reason) values ($1, '허위 게시물')`, [id]);
+  assert.equal((await as(OTHER, 'select id from items_view where id = $1', [id])).length, 0, '유효한 신고 3건이면 숨김');
+  // 신고 기각 3번으로는 작성자에게 알림이 가지 않고, 자동 숨김 알림 1건만 추가됨
+  assert.equal((await as(R4, 'select count(*)::int n from notifications'))[0].n, before + 1);
+});
