@@ -140,20 +140,6 @@ table.info td:first-child { width: 96px; color: var(--muted); font-weight: 600; 
 .filter-panel { display: flex; flex-direction: column; gap: 16px; background: #fff; border: 1px solid var(--line);
   border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: var(--shadow-xs); }
 .filter-panel input { background: var(--bg); padding: 12px 16px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; border: 1px solid transparent;
-  background: var(--soft); color: var(--text-2); font-size: 14px; font-weight: 700; }
-.chip:hover { background: #e2e8f0; }
-.chip.on { background: var(--primary); color: #fff; }
-.chip.on:hover { background: var(--primary-hover); }
-.chip.dark.on { background: var(--text); }
-.chip.dark.on:hover { background: #1e293b; }
-.chip.dark { background: #fff; border-color: var(--line); }
-.chip.dark:hover { background: var(--bg); }
-.chip.dark.on { border-color: var(--text); }
-.swatch { width: 12px; height: 12px; border-radius: 999px; border: 1px solid rgba(15,23,42,.15); display: inline-block; }
-.color-row { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
-.color-label { font-size: 13px; font-weight: 800; color: var(--text-2); }
 .count-label { font-size: 15px; font-weight: 700; color: var(--text-2); margin: 4px 0 12px; }
 .count-label b { color: var(--primary); }
 .empty-state { text-align: center; padding: 48px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; }

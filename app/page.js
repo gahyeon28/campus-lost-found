@@ -9,13 +9,6 @@ import { BUILDINGS } from '@/lib/campus';
 
 const EMPTY = { category: '', color: '', building: '', status: '', q: '', mine: false };
 
-// 색상 칩의 점 색. 시안 기준이며 DB 색상값(COLORS)과 같은 이름을 쓴다.
-const COLOR_HEX = {
-  검정: '#0f172a', 흰색: '#ffffff', 회색: '#94a3b8', 빨강: '#ef4444', 주황: '#f97316', 노랑: '#eab308',
-  초록: '#16a34a', 파랑: '#2563eb', 남색: '#1e3a8a', 보라: '#8b5cf6', 분홍: '#f472b6', 갈색: '#92400e',
-  베이지: '#d6c7a8', 은색: 'linear-gradient(135deg, #e2e8f0, #94a3b8)', 금색: 'linear-gradient(135deg, #fde68a, #d97706)',
-  투명: '#f1f5f9', 기타: '#cbd5e1',
-};
 
 function Feed() {
   const { user } = useAuth();
@@ -63,36 +56,23 @@ function Feed() {
       <section className="filter-panel">
         <input placeholder="찾는 물건을 검색하세요 (예: 에어팟, 지갑)" value={f.q} onChange={set('q')} />
 
-        <div className="chips">
-          <button type="button" className={`chip ${!f.category ? 'on' : ''}`} onClick={() => pick('category', '')}>전체</button>
-          {CATEGORIES.map((c) => (
-            <button key={c} type="button" className={`chip ${f.category === c ? 'on' : ''}`} onClick={() => pick('category', c)}>
-              {CATEGORY_EMOJI[c]} {c}
-            </button>
-          ))}
-        </div>
-
         <div className="row">
+          <select value={f.category} onChange={set('category')}>
+            <option value="">전체 카테고리</option>
+            {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_EMOJI[c]} {c}</option>)}
+          </select>
+          <select value={f.color} onChange={set('color')}>
+            <option value="">전체 색상</option>
+            {COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
           <select value={f.building} onChange={set('building')}>
             <option value="">전체 건물·광장</option>
-            {BUILDINGS.map((b) => <option key={b.name}>{b.name}</option>)}
+            {BUILDINGS.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
           </select>
           <select value={f.status} onChange={set('status')}>
             <option value="">전체 상태</option>
-            {STATUSES.map((s) => <option key={s}>{s}</option>)}
+            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-        </div>
-
-        <div className="color-row">
-          <span className="color-label">🎨 색상</span>
-          <div className="chips">
-            <button type="button" className={`chip dark ${!f.color ? 'on' : ''}`} onClick={() => pick('color', '')}>전체</button>
-            {COLORS.map((c) => (
-              <button key={c} type="button" className={`chip dark ${f.color === c ? 'on' : ''}`} onClick={() => pick('color', c)}>
-                <span className="swatch" style={{ background: COLOR_HEX[c] }} /> {c}
-              </button>
-            ))}
-          </div>
         </div>
 
         <label className="check"><input type="checkbox" checked={f.mine} onChange={set('mine')} /> 내가 등록한 것만</label>
