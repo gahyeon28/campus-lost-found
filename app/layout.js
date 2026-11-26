@@ -9,13 +9,14 @@ export const metadata = {
 
 export const viewport = { width: 'device-width', initialScale: 1 };
 
-export default function RootLayout({ children }) {
+export default function RootLayout({ children, modal }) {
   return (
     <html lang="ko">
       <body>
         <AuthProvider>
           <Nav />
           <main className="container">{children}</main>
+          {modal}
         </AuthProvider>
       </body>
     </html>

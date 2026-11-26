@@ -2,7 +2,6 @@
 // 습득물 등록·수정 공용 폼
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase, authedFetch } from '@/lib/supabase';
@@ -120,13 +119,13 @@ export default function ItemForm({ item }) {
   }
 
   const storageOptions = [STORAGE_TYPES[1], STORAGE_TYPES[0]]; // 시안 순서: 근처 공용 장소 → 그 자리에
-  const closeHref = editing ? `/items/${item.id}` : '/';
+  const close = () => (editing ? router.push(`/items/${item.id}`) : router.back()); // 오버레이에서 열었으면 원래 페이지로
 
   return (
     <div className="form-shell">
       <div className="form-head">
         <h2>{editing ? '습득물 수정' : '새 습득물 등록'}</h2>
-        <Link href={closeHref} className="icon-btn" aria-label="닫기">✕</Link>
+        <button type="button" className="icon-btn" aria-label="닫기" onClick={close}>✕</button>
       </div>
       <p className="muted">{editing ? '수령 신청이 들어오기 전까지 고칠 수 있어요.' : '주운 물건을 그 자리에 두었거나 근처 공용 장소에 맡겼다면 위치를 남겨주세요.'}</p>
 
@@ -215,7 +214,7 @@ export default function ItemForm({ item }) {
 
         {error && <p className="error">{error}</p>}
         <div className="form-actions">
-          <Link href={closeHref} className="btn">취소</Link>
+          <button type="button" className="btn" onClick={close}>취소</button>
           <button className="primary" disabled={busy || ai.state === 'loading'}>{busy ? '저장 중…' : editing ? '수정 내용 저장' : '습득물 등록 완료'}</button>
         </div>
       </form>
