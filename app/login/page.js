@@ -71,7 +71,7 @@ export default function LoginPage() {
             </label>
             <label className="check">
               <input type="checkbox" checked={agreeAi} onChange={(e) => setAgreeAi(e.target.checked)} />
-              <span>[선택] 등록한 사진을 AI 자동 태깅 서비스(Gemini·Claude)로 보내는 데 동의합니다</span>
+              <span>[선택] 등록한 사진을 AI 자동 태깅 서비스(Gemini)로 보내는 데 동의합니다</span>
             </label>
             <button className="primary gradient" disabled={busy || !agreeReq}>{busy ? '보내는 중…' : '6자리 인증 코드 받기 →'}</button>
           </form>

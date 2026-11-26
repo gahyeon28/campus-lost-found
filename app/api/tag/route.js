@@ -6,6 +6,8 @@ export async function POST(req) {
   if (!visionProvider()) return json({ error: 'AI 자동 태깅이 설정되지 않았어요. 직접 입력해주세요.' }, 503);
   const user = await requireUser(req);
   if (!user) return json({ error: '학교 이메일로 로그인해야 합니다.' }, 401);
+  // 로그인 화면에서 AI 전송에 동의한 사용자의 사진만 외부 AI로 보낸다
+  if (user.user_metadata?.consent_ai !== true) return json({ error: 'AI 자동 입력에 동의하지 않아 직접 입력해주세요.', code: 'NO_CONSENT' }, 403);
 
   const { image } = await req.json().catch(() => ({}));
   if (typeof image !== 'string' || image.length < 100 || image.length > 4_000_000) {

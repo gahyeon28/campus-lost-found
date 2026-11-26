@@ -45,13 +45,16 @@ export default function ItemForm({ item }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
   const quizRecommended = ai.recommended || QUIZ_RECOMMENDED.includes(form.category) || !!form.brand.trim();
 
+  const aiConsent = user?.user_metadata?.consent_ai === true; // 로그인 때 AI 전송에 동의한 경우만 자동 태깅
+
   async function onPhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const img = await shrinkImage(file);
       setPhoto(img);
-      runAi(img);
+      if (aiConsent) runAi(img);
+      else setAi({ state: 'idle', msg: 'AI 자동 입력에 동의하지 않아 직접 입력해주세요.', recommended: false });
     } catch (err) {
       setError(err.message);
     }
@@ -131,7 +134,7 @@ export default function ItemForm({ item }) {
 
       <form onSubmit={submit} className="stack form-body">
         <section className="stack">
-          <h3 className="step">1. 습득물 사진 {editing ? '바꾸기 (선택)' : '업로드'} (자동 압축 &amp; Gemini AI 자동 태깅)</h3>
+          <h3 className="step">1. 습득물 사진 {editing ? '바꾸기 (선택)' : '업로드'} (자동 압축{aiConsent ? ' & Gemini AI 자동 태깅' : ''})</h3>
           <label className="drop">
             <input type="file" accept="image/*" onChange={onPhoto} hidden />
             <span className="drop-icon">📷</span>
