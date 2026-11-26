@@ -54,20 +54,31 @@ function Admin() {
 
   return (
     <>
-      <h2>관리자</h2>
-      <p className="muted">신고된 게시물과 주의가 필요한 사용자를 관리해요. 처리 결과는 해당 사용자의 알림함으로 전달돼요.</p>
+      <section className="card admin-head">
+        <div className="admin-icon">🛡️</div>
+        <div>
+          <h2>관리자 신고 및 이용 정지 관리</h2>
+          <p className="muted">서로 다른 3명이 신고하여 자동 숨김 처리된 게시물과 신고가 쌓인 게시물을 검토·복구·삭제하거나, 위반 계정을 이용 정지합니다. 처리 결과는 해당 사용자의 알림함으로 전달돼요.</p>
+        </div>
+      </section>
 
-      <div style={{ display: 'flex', gap: 8, margin: '12px 0 16px', flexWrap: 'wrap' }}>
-        <button className={tab === 'reports' ? 'primary' : ''} onClick={() => setTab('reports')}>신고된 게시물 ({reports.length})</button>
-        <button className={tab === 'users' ? 'primary' : ''} onClick={() => setTab('users')}>주의 사용자 ({users.length})</button>
-        <button className={tab === 'admins' ? 'primary' : ''} onClick={() => setTab('admins')}>관리자 ({admins.length})</button>
-        <button className={tab === 'logs' ? 'primary' : ''} onClick={() => setTab('logs')}>처리 기록</button>
+      <div className="seg">
+        <button className={`seg-btn ${tab === 'reports' ? 'on' : ''}`} onClick={() => setTab('reports')}>신고된 게시물 ({reports.length})</button>
+        <button className={`seg-btn ${tab === 'users' ? 'on' : ''}`} onClick={() => setTab('users')}>주의 사용자 ({users.length})</button>
+        <button className={`seg-btn ${tab === 'admins' ? 'on' : ''}`} onClick={() => setTab('admins')}>관리자 ({admins.length})</button>
+        <button className={`seg-btn ${tab === 'logs' ? 'on' : ''}`} onClick={() => setTab('logs')}>처리 기록</button>
       </div>
 
       {flash && <div className={`box ${flash.error ? 'red' : 'green'}`} style={{ marginBottom: 14 }}>{flash.error || flash.ok}</div>}
 
       {tab === 'reports' && (
-        reports.length === 0 ? <p className="muted center">신고된 게시물이 없어요.</p> : (
+        reports.length === 0 ? (
+          <div className="card empty-state">
+            <div className="empty-icon">🛡️</div>
+            <h2>현재 검토가 필요한 신고 게시물이 없습니다</h2>
+            <p className="muted">신고가 3건 이상 쌓이면 이곳에 표시됩니다.</p>
+          </div>
+        ) : (
           <div className="stack">
             {reports.map((r) => (
               <div key={r.item_id} className="card stack">
