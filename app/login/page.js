@@ -39,28 +39,39 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '40px auto' }}>
-      <div className="hero">
-        <h1>🔎 교내 분실물 스마트 찾기</h1>
-        <p>학교 이메일로 로그인한 학생·교직원만 이용할 수 있어요.</p>
+    <div className="login-wrap">
+      <div className="login-brand">
+        <span className="login-logo">📍</span>
+        <b className="login-name">가천 <span>분실물 찾기</span></b>
       </div>
-      <div className="card">
+
+      <section className="login-hero">
+        <span className="hero-pill">✨ AI 자동 태깅 · 조건 기반 분실 알림 · 본인 확인 퀴즈</span>
+        <h1 className="hero-title">가천대 구성원 전용 분실물 플랫폼</h1>
+        <p>분실 조건만 등록하면 일치하는 습득물이 올라올 때 바로 알려드립니다.</p>
+      </section>
+
+      <div className="card login-card">
+        <div className="login-icon">✉️</div>
+        <h2>학교 이메일 인증 로그인</h2>
+        <p className="muted">허위 게시물 및 무단 수령 방지를 위해 <b style={{ color: 'var(--text)' }}>@{SCHOOL_DOMAIN}</b> 계정으로만 로그인할 수 있습니다.</p>
+
         {!sent ? (
-          <form onSubmit={sendCode}>
+          <form onSubmit={sendCode} className="stack">
             <label>
-              학교 이메일
-              <input type="email" required placeholder={`@${SCHOOL_DOMAIN}`} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+              가천대학교 웹메일 주소
+              <input type="email" required placeholder={`예: gachon2026@${SCHOOL_DOMAIN}`} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
             </label>
-            <button className="primary" disabled={busy}>{busy ? '보내는 중…' : '인증 코드 받기'}</button>
+            <button className="primary gradient" disabled={busy}>{busy ? '보내는 중…' : '6자리 인증 코드 받기 →'}</button>
           </form>
         ) : (
-          <form onSubmit={verify}>
+          <form onSubmit={verify} className="stack">
             <p className="muted">{email} 로 보낸 코드를 입력하세요.</p>
             <label>
               인증 코드
               <input inputMode="numeric" autoComplete="one-time-code" required pattern="[0-9]{6,10}" value={code} onChange={(e) => setCode(e.target.value)} />
             </label>
-            <button className="primary" disabled={busy}>{busy ? '확인 중…' : '로그인'}</button>
+            <button className="primary gradient" disabled={busy}>{busy ? '확인 중…' : '로그인'}</button>
             <button type="button" className="link" onClick={() => { setSent(false); setCode(''); setMsg(null); }}>이메일 다시 입력</button>
           </form>
         )}
