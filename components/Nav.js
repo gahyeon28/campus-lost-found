@@ -9,6 +9,7 @@ const LINKS = [
   ['/', '🏠 피드'],
   ['/items/new', '📦 습득물 등록'],
   ['/alerts', '🔔 분실 알림'],
+  ['/inbox', '📥 내 알림함'],
 ];
 
 export default function Nav() {
@@ -36,7 +37,7 @@ export default function Nav() {
           {LINKS.map(([href, label]) => (
             <Link key={href} href={href} className={path === href ? 'active' : ''}>
               {label}
-              {href === '/alerts' && unread > 0 && <span className="dot">{unread}</span>}
+              {href === '/inbox' && unread > 0 && <span className="dot">{unread}</span>}
             </Link>
           ))}
           {isAdmin && <Link href="/admin" className={path === '/admin' ? 'active' : ''}>관리자</Link>}

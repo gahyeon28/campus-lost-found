@@ -200,3 +200,9 @@ table.info td:first-child { width: 96px; color: var(--muted); font-weight: 600; 
 .login-card .stack { gap: 14px; margin-top: 8px; }
 .login-card .check { align-items: flex-start; font-weight: 500; font-size: 13px; line-height: 1.5; color: var(--text-2); }
 .login-card .check input { margin-top: 2px; flex-shrink: 0; }
+
+/* inbox (내 알림함) */
+.inbox-head { margin-bottom: 20px; }
+.inbox-head h2 { margin: 0 0 6px; }
+.inbox-head p { margin: 0; }
+.inbox-bar { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 12px; }

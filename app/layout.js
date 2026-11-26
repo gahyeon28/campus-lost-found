@@ -12,6 +12,9 @@ export const viewport = { width: 'device-width', initialScale: 1 };
 export default function RootLayout({ children, modal }) {
   return (
     <html lang="ko">
+      <head>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+      </head>
       <body>
         <AuthProvider>
           <Nav />
