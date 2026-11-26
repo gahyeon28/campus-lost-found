@@ -13,6 +13,8 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [agreeReq, setAgreeReq] = useState(false); // 필수: 이메일 수집·이용, 처리방침
+  const [agreeAi, setAgreeAi] = useState(false); // 선택: 사진을 AI 자동 태깅 서비스로 전송
 
   useEffect(() => {
     if (user) router.replace('/');
@@ -21,9 +23,10 @@ export default function LoginPage() {
   async function sendCode(e) {
     e.preventDefault();
     const addr = email.trim().toLowerCase();
+    if (!agreeReq) return setMsg({ error: '개인정보 수집·이용에 동의해주세요.' });
     if (!isSchoolEmail(addr)) return setMsg({ error: `학교 이메일(@${SCHOOL_DOMAIN})만 사용할 수 있어요.` });
     setBusy(true);
-    const { error } = await supabase().auth.signInWithOtp({ email: addr, options: { shouldCreateUser: true } });
+    const { error } = await supabase().auth.signInWithOtp({ email: addr, options: { shouldCreateUser: true, data: { consent_required_at: new Date().toISOString(), consent_ai: agreeAi } } });
     setBusy(false);
     if (error) return setMsg({ error: error.message.includes('Database error') ? '학교 이메일로만 가입할 수 있어요.' : error.message });
     setSent(true);
@@ -62,7 +65,15 @@ export default function LoginPage() {
               가천대학교 웹메일 주소
               <input type="email" required placeholder={`예: gachon2026@${SCHOOL_DOMAIN}`} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
             </label>
-            <button className="primary gradient" disabled={busy}>{busy ? '보내는 중…' : '6자리 인증 코드 받기 →'}</button>
+            <label className="check">
+              <input type="checkbox" checked={agreeReq} onChange={(e) => setAgreeReq(e.target.checked)} />
+              <span>[필수] 학교 이메일 수집·이용에 동의합니다</span>
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={agreeAi} onChange={(e) => setAgreeAi(e.target.checked)} />
+              <span>[선택] 등록한 사진을 AI 자동 태깅 서비스(Gemini·Claude)로 보내는 데 동의합니다</span>
+            </label>
+            <button className="primary gradient" disabled={busy || !agreeReq}>{busy ? '보내는 중…' : '6자리 인증 코드 받기 →'}</button>
           </form>
         ) : (
           <form onSubmit={verify} className="stack">
