@@ -30,7 +30,7 @@ export default function MapPicker({ value, onChange, readOnly = false, height = 
             key={b.name}
             center={[b.lat, b.lng]}
             radius={selected ? 11 : 8}
-            pathOptions={{ color: selected ? '#5b4fcf' : '#8f86d6', fillColor: selected ? '#5b4fcf' : '#c9c2ff', fillOpacity: 0.85 }}
+            pathOptions={{ color: selected ? '#0047AB' : '#5BC8F5', fillColor: selected ? '#0047AB' : '#BDEBFB', fillOpacity: 0.85 }}
             bubblingMouseEvents={false}
             eventHandlers={readOnly ? {} : { click: () => onChange({ lat: b.lat, lng: b.lng, building: b.name }) }}
           >
@@ -39,7 +39,7 @@ export default function MapPicker({ value, onChange, readOnly = false, height = 
         );
       })}
       {value?.lat && (
-        <CircleMarker center={[value.lat, value.lng]} radius={7} pathOptions={{ color: '#e5486b', fillColor: '#ff7a95', fillOpacity: 1 }}>
+        <CircleMarker center={[value.lat, value.lng]} radius={7} pathOptions={{ color: '#E35D00', fillColor: '#FF7A1A', fillOpacity: 1 }}>
           <Tooltip direction="bottom">발견 위치</Tooltip>
         </CircleMarker>
       )}
