@@ -384,3 +384,15 @@ test('허위 신고 반복: 기각된 신고가 3건 이상이면 그 사람의 
   // 신고 기각 3번으로는 작성자에게 알림이 가지 않고, 자동 숨김 알림 1건만 추가됨
   assert.equal((await as(R4, 'select count(*)::int n from notifications'))[0].n, before + 1);
 });
+
+test('분실 알림 동선: 동선 안의 건물에서 습득된 물건만 알린다', async () => {
+  await as(OWNER, `insert into watches (keywords, buildings) values ('{장우산}', '{AI관,중앙도서관}')`);
+  await as(OTHER, `insert into watches (keywords, buildings) values ('{장우산}', '{가천관}')`);
+  await as(R4, `insert into watches (keywords) values ('{장우산}')`); // 동선 없음 = 전체
+  await assert.rejects(as(R4, `insert into watches (keywords, buildings) values ('{장우산}', '{}')`), /check constraint/);
+
+  const [{ id }] = await as(FINDER, 'select create_item($1::jsonb) as id', [newItem({ title: '노랑 장우산', category: '기타', color: '노랑', tags: [], description: '' })]);
+  const sent = (await as('service', 'select * from notify_matches($1, $2)', [id, FINDER.id])).map((s) => s.email).sort();
+  assert.deepEqual(sent, [OWNER.email, R4.email].sort(), '중앙도서관 습득물 → 동선에 중앙도서관 있는 사람과 전체 구독자만');
+});
+

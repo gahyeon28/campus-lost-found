@@ -37,7 +37,7 @@ function Alerts() {
                 <div>
                   <b>{w.keywords.join(', ')}</b>
                   <div className="muted">
-                    {[w.category, w.color, w.building, w.lost_from && `${w.lost_from} 이후`].filter(Boolean).join(' · ') || '추가 조건 없음'}
+                    {[w.category, w.color, w.buildings && `동선: ${w.buildings.join(' → ')}`, w.lost_from && `${w.lost_from} 이후`].filter(Boolean).join(' · ') || '추가 조건 없음'}
                     {!w.active && ' · 꺼짐'}
                   </div>
                 </div>

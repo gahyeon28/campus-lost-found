@@ -158,11 +158,23 @@ create table if not exists public.watches (
   keywords   text[] not null check (cardinality(keywords) between 1 and 10),
   category   text,
   color      text,
-  building   text,
+  buildings  text[] check (buildings is null or cardinality(buildings) between 1 and 30), -- 이동 동선(건물 여러 개). null이면 전체
   lost_from  date,
   active     boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+-- 예전 '건물 1개' 칸을 동선(건물 여러 개)으로 옮긴다. 이미 옮겼으면 아무것도 하지 않는다.
+alter table public.watches add column if not exists buildings text[]
+  check (buildings is null or cardinality(buildings) between 1 and 30);
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'watches' and column_name = 'building') then
+    update public.watches set buildings = array[building] where building is not null and buildings is null;
+    alter table public.watches drop column building;
+  end if;
+end $$;
 
 create table if not exists public.notifications (
   id         bigint generated always as identity primary key,
@@ -231,7 +243,7 @@ revoke all on public.allowed_domains, public.items, public.items_view, public.it
 grant select (id, owner_id, status), delete on public.items to authenticated;
 grant select on public.items_view to authenticated;
 grant select, insert (item_id, reason, detail) on public.reports to authenticated;
-grant select, delete, insert (keywords, category, color, building, lost_from), update (active)
+grant select, delete, insert (keywords, category, color, buildings, lost_from), update (active)
   on public.watches to authenticated;
 grant select, update (read) on public.notifications to authenticated;
 
@@ -563,7 +575,7 @@ begin
       and w.user_id <> v_item.owner_id
       and (w.category is null or w.category = v_item.category)
       and (w.color    is null or v_item.color is null or w.color = v_item.color) -- 습득자가 색을 안 고른 물건도 놓치지 않게
-      and (w.building is null or w.building = v_item.building)
+      and (w.buildings is null or v_item.building = any(w.buildings)) -- 등록한 동선 안의 건물에서 나온 물건만
       and (w.lost_from is null or v_item.found_at >= w.lost_from)
       and exists (
         select 1 from unnest(w.keywords) k

@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { CATEGORIES, COLORS } from '@/lib/constants';
 import { BUILDINGS } from '@/lib/campus';
 
-const EMPTY = { keywords: '', category: '', color: '', building: '', lost_from: '' };
+const EMPTY = { keywords: '', category: '', color: '', buildings: [], lost_from: '' };
 
 export default function AlertForm({ onClose, onSaved }) {
   const { user } = useAuth();
@@ -14,6 +14,10 @@ export default function AlertForm({ onClose, onSaved }) {
   const [msg, setMsg] = useState(null);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  // 누른 순서대로 동선에 추가, 다시 누르면 뺀다.
+  const toggleBuilding = (name) => setForm((f) => ({
+    ...f, buildings: f.buildings.includes(name) ? f.buildings.filter((b) => b !== name) : [...f.buildings, name],
+  }));
 
   async function add(e) {
     e.preventDefault();
@@ -23,7 +27,7 @@ export default function AlertForm({ onClose, onSaved }) {
       keywords,
       category: form.category || null,
       color: form.color || null,
-      building: form.building || null,
+      buildings: form.buildings.length ? form.buildings : null,
       lost_from: form.lost_from || null,
     });
     if (error) return setMsg({ error: error.message });
@@ -38,7 +42,7 @@ export default function AlertForm({ onClose, onSaved }) {
         <h2>🔔 조건 기반 분실 알림 등록</h2>
         {onClose && <button type="button" className="icon-btn" aria-label="닫기" onClick={onClose}>✕</button>}
       </div>
-      <p className="muted">키워드, 카테고리, 색상, 건물·광장 조건을 저장해 두면 일치하는 습득물이 등록될 때 학교 메일과 내 알림함으로 즉시 알려드립니다. "에어팟"으로 등록하면 "버즈", "이어폰"처럼 비슷한 말이 들어간 물건도 찾아요.</p>
+      <p className="muted">키워드, 카테고리, 색상, 이동 동선 조건을 저장해 두면 일치하는 습득물이 등록될 때 학교 메일과 내 알림함으로 즉시 알려드립니다. "에어팟"으로 등록하면 "버즈", "이어폰"처럼 비슷한 말이 들어간 물건도 찾아요.</p>
 
       <div className="form-body stack">
         <label>물건 키워드 * (쉼표로 구분, 하나라도 포함되면 알림)
@@ -57,16 +61,32 @@ export default function AlertForm({ onClose, onSaved }) {
               {COLORS.map((c) => <option key={c}>{c}</option>)}
             </select>
           </label>
-          <label>예상 분실 건물·광장
-            <select value={form.building} onChange={set('building')}>
-              <option value="">전체 건물·광장</option>
-              {BUILDINGS.map((b) => <option key={b.name}>{b.name}</option>)}
-            </select>
-          </label>
           <label>잃어버린 날짜 (이후 습득분만)
             <input type="date" value={form.lost_from} onChange={set('lost_from')} />
           </label>
         </div>
+
+        <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+            오늘 이동한 동선 (선택 · 지나간 건물·광장을 순서대로 눌러주세요)
+          </legend>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {BUILDINGS.map((b) => {
+              const on = form.buildings.includes(b.name);
+              return (
+                <button key={b.name} type="button" className={on ? 'primary' : ''} aria-pressed={on}
+                  style={{ padding: '6px 12px', fontSize: 13 }} onClick={() => toggleBuilding(b.name)}>
+                  {on && `${form.buildings.indexOf(b.name) + 1}. `}{b.name}
+                </button>
+              );
+            })}
+          </div>
+          <p className="muted" style={{ margin: '6px 0 0' }}>
+            {form.buildings.length
+              ? <>동선: {form.buildings.join(' → ')} · 이 건물들에서 습득된 물건만 알려드려요. <button type="button" className="link" onClick={() => setForm({ ...form, buildings: [] })}>모두 지우기</button></>
+              : '아무것도 고르지 않으면 캠퍼스 전체에서 습득된 물건을 알려드려요.'}
+          </p>
+        </fieldset>
 
         <div className="box purple">
           <b>💡 분실 알림 안내</b>
